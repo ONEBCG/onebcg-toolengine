@@ -76,8 +76,8 @@ public sealed class TenantAuthorizationBehavior<TRequest, TResponse>
             var method = typeof(ToolResponse<>)
                 .MakeGenericType(outputType)
                 .GetMethod(nameof(ToolResponse<object>.Fail),
-                    [typeof(Guid), typeof(ToolError)])!;
-            return (TResponse)method.Invoke(null, [cmd.CorrelationId, error])!;
+                    [typeof(Guid), typeof(ToolError), typeof(ToolUsageMetrics)])!;
+            return (TResponse)method.Invoke(null, [cmd.CorrelationId, error, null])!;
         }
 
         throw new UnauthorizedAccessException(error.Description);
