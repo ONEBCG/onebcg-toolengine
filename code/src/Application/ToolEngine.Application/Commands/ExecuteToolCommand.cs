@@ -18,7 +18,12 @@ public sealed record ExecuteToolCommand<TInput, TOutput>(
     string        ToolVersion,
     TInput        Input,
     ToolType      ToolType,
-    ExecutionMode Mode               = ExecutionMode.Sequential,
-    string        ToolNamespace      = "",
-    int           MaxResponseTokens  = 25_000)
+    ExecutionMode Mode                   = ExecutionMode.Sequential,
+    string        ToolNamespace          = "",
+    int           MaxResponseTokens      = 25_000,
+    string?       IdempotencyKey         = null,
+    // H4 — agent identity claim from JWT "caller_type"
+    CallerType    CallerType             = CallerType.Human,
+    // H5 — ISO 42001 governance metadata JSON from X-Governance-Metadata header
+    string?       GovernanceMetadataJson = null)
     : IRequest<ToolResponse<TOutput>>, IExecuteToolCommand;

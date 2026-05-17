@@ -21,6 +21,10 @@
 13. [Using the Approval Gate](#13-using-the-approval-gate)
 14. [Configuration Reference](#14-configuration-reference)
 15. [Deployment Notes](#15-deployment-notes)
+16. [Security Hardening — Phase E](#16-security-hardening--phase-e)
+17. [Provider Abstractions — Phase F](#17-provider-abstractions--phase-f)
+18. [Observability — Phase G](#18-observability--phase-g)
+19. [Compliance — Phase H](#19-compliance--phase-h)
 
 ---
 
@@ -153,7 +157,7 @@ Durable state created when a tool execution is suspended pending human approval.
 | Field | Description |
 |---|---|
 | `Id` | `Guid` — the invocation identifier used in poll URLs |
-| `ApprovalToken` | Opaque URL-safe token included in magic-link emails and webhook payloads |
+| `ApprovalToken` | 256-bit CSPRNG token (`RandomNumberGenerator.GetBytes(32)` → hex) — 64-character hex string, included in magic-link emails and webhook payloads |
 | `OtpHash` | SHA-256 hash of the one-time password (only set for `EmailOtp` channel) |
 | `Status` | `Pending` → `Approved` / `Denied` / `Expired` |
 | `Risk` | `Low` / `Medium` / `High` / `Critical` |
@@ -170,7 +174,8 @@ var tenant = Tenant.Create("acme-corp", "Acme Corp", "admin@acme.com", clock).Va
 tenant.AllowNamespace("math");
 tenant.AllowNamespace("weather");
 
-// Cap LLM token usage
+// Cap per-request LLM tokens and daily tool invocations
+// DailyToolCallBudget == 0 means no cap (tenant unrestricted)
 tenant.SetLimits(maxResponseTokens: 8_000, dailyBudget: 5_000);
 
 // Link to a secret vault entry (never the raw key)
@@ -384,28 +389,35 @@ var response = await mediator.Send(command, ct);
 
 Behaviors execute outermost to innermost. Each is a guard that either short-circuits with an error response or calls `next()`.
 
+Authorization runs before Validation so that unauthorized callers never receive detailed field-level validation errors (OWASP A01:2025 Broken Access Control).
+
 ```
 Request
   │
   ▼
 ┌─────────────────────────────────────────┐
-│  1. ValidationBehavior                  │  FluentValidation — rejects malformed input
-│                                         │  before any DB access or tool resolution.
+│  1. TenantAuthorizationBehavior         │  Loads Tenant from DB. Rejects unknown,
+│                                         │  inactive, or namespace-blocked tenants.
+│                                         │  Auth before Validation — OWASP A01:2025.
 ├─────────────────────────────────────────┤
-│  2. TenantAuthorizationBehavior         │  Loads Tenant from DB. Rejects if inactive
-│                                         │  or namespace not in AllowedNamespaces.
+│  2. ValidationBehavior                  │  FluentValidation — rejects malformed input.
+│                                         │  Only reached by authorized callers.
 ├─────────────────────────────────────────┤
 │  3. TokenBudgetBehavior                 │  Compares MaxResponseTokens against tenant cap.
 │                                         │  Rejects if exceeded.
 ├─────────────────────────────────────────┤
-│  4. LoopDetectionBehavior               │  Counts invocations per (correlationId, tool).
+│  4. DailyBudgetBehavior                 │  Counts today's ToolInvocationRecords for the
+│                                         │  tenant. Rejects if DailyToolCallBudget reached.
+│                                         │  0 = no cap (tenant unrestricted).
+├─────────────────────────────────────────┤
+│  5. LoopDetectionBehavior               │  Counts invocations per (correlationId, tool).
 │                                         │  Circuit-opens after threshold (default 10).
 ├─────────────────────────────────────────┤
-│  5. ApprovalBehavior                    │  Reads [RequiresApproval] via IToolDiscovery.
+│  6. ApprovalBehavior                    │  Reads [RequiresApproval] via IToolDiscovery.
 │                                         │  Routes to IHumanApprovalGate. Suspends,
 │                                         │  denies, or passes through.
 ├─────────────────────────────────────────┤
-│  6. AuditBehavior                       │  Creates ToolInvocationRecord before handler.
+│  7. AuditBehavior                       │  Creates ToolInvocationRecord before handler.
 │                                         │  Marks succeeded or failed after.
 └─────────────────────────────────────────┘
   │
@@ -417,10 +429,11 @@ Handler (ExecuteToolCommandHandler)
 
 | Behavior | HTTP | Error code |
 |---|---|---|
+| TenantAuthorizationBehavior (not found / inactive) | 401 | `UNAUTHORIZED` |
+| TenantAuthorizationBehavior (namespace blocked) | 403 | `UNAUTHORIZED` |
 | ValidationBehavior | 400 | `VALIDATION_ERROR` |
-| TenantAuthorizationBehavior (not found) | 401 | `UNAUTHORIZED` |
-| TenantAuthorizationBehavior (inactive / namespace blocked) | 403 | `UNAUTHORIZED` |
 | TokenBudgetBehavior | 400 | `TOKEN_BUDGET_EXCEEDED` |
+| DailyBudgetBehavior | 429 | `DAILY_BUDGET_EXCEEDED` |
 | LoopDetectionBehavior | 429 | `AGENT_LOOP_DETECTED` |
 | ApprovalBehavior — suspended | 202 | `APPROVAL_PENDING` |
 | ApprovalBehavior — denied | 403 | `APPROVAL_DENIED` |
@@ -547,13 +560,18 @@ Approve: POST https://app.onebcg.com/approvals/{token}/decide?action=approve
 Deny:    POST https://app.onebcg.com/approvals/{token}/decide?action=deny
 ```
 
-The `token` is an opaque `Guid.NewGuid().ToString("N")` — 32-character hex string. It acts as the shared secret; no JWT is required on the decide endpoint.
+The `token` is a **256-bit CSPRNG secret** — `Convert.ToHexString(RandomNumberGenerator.GetBytes(32))` — producing a 64-character hex string. It acts as the shared secret; no JWT is required on the decide endpoint. The use of `RandomNumberGenerator` (not `Guid.NewGuid()`) satisfies the OWASP minimum 128-bit CSPRNG entropy requirement for passwordless authentication tokens.
 
 #### EmailOtpChannel
 For `Critical` risk tools only. Sends a 6-digit OTP to `ApproverEmail`. The OTP is:
-1. Generated using `RandomNumberGenerator` (cryptographically secure).
+1. Generated using `RandomNumberGenerator` (cryptographically secure — NIST SP 800-63B compliant).
 2. SHA-256 hashed before storage — never stored in plaintext.
 3. Verified by `POST /approvals/otp/verify` — hash of submitted OTP is compared to stored hash.
+
+**Rate limiting and lockout** (OWASP MFA Cheat Sheet compliance):
+- The OTP verify endpoint is rate-limited at the IP level: **10 attempts per IP per 10 minutes** via ASP.NET Core's `SlidingWindowRateLimiter`. Excess requests receive `429 Too Many Requests` with a `Retry-After: 60` header.
+- The `PendingApproval` entity tracks `FailedOtpAttempts`. After **5 consecutive failures** on the same token, `IncrementFailedOtpAttempts()` transitions the approval to `Expired`, permanently invalidating it. The user must request a new approval.
+- Remaining attempts are surfaced in the `400` error body: `"Invalid OTP. 3 attempt(s) remaining."` so the approver knows their position without probing blindly.
 
 #### WebhookChannel
 POSTs a JSON payload to `ApprovalOptions.WebhookUrl`:
@@ -1107,6 +1125,586 @@ public sealed class RedisLoopDetectionBehavior<TRequest, TResponse>
 GET /health
 → 200 { "status": "Healthy" }
 ```
+
+---
+
+---
+
+## 16. Security Hardening — Phase E
+
+Phase E resolves eight security gaps identified in the architecture review against OWASP, NIST, and internal compliance requirements. All items are implemented and build clean.
+
+### E1 — CSPRNG approval token (Critical)
+
+**Before:** `ApprovalToken = Guid.NewGuid().ToString("N")` — 122 bits of entropy, predictable UUID structure.
+
+**After:**
+```csharp
+// PendingApproval constructor
+ApprovalToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+// Result: 64-char hex string, 256 bits of CSPRNG entropy
+```
+
+Why it matters: UUID v4 has fixed version/variant nibbles that reduce effective entropy and make format-based enumeration marginally easier. OWASP requires CSPRNG for passwordless authentication tokens. The new token exceeds the OWASP minimum (128 bits) by 2×.
+
+### E2 — OTP attempt counter and per-token lockout (Critical)
+
+`PendingApproval` now tracks failed OTP attempts. After 5 consecutive failures, the approval is irreversibly expired — a new approval request is required.
+
+```csharp
+// Entity method
+public bool IncrementFailedOtpAttempts(int maxAttempts = 5)
+{
+    FailedOtpAttempts++;
+    if (FailedOtpAttempts >= maxAttempts) { Expire(); return true; }
+    return false;
+}
+
+// VerifyOtp endpoint
+var locked = tracked.IncrementFailedOtpAttempts(maxAttempts: 5);
+await uow.SaveChangesAsync(ct);
+
+return locked
+    ? Results.Problem("Maximum OTP attempts exceeded. Approval request has been invalidated.",
+        statusCode: 410, title: "APPROVAL_EXPIRED")
+    : Results.Problem($"Invalid OTP. {5 - tracked.FailedOtpAttempts} attempt(s) remaining.",
+        statusCode: 400, title: "INVALID_OTP");
+```
+
+This satisfies the OWASP MFA Cheat Sheet entity-level lockout requirement independently of IP-based rate limiting.
+
+### E3 — IP-level rate limiting on OTP verify endpoint (Critical)
+
+```csharp
+// Program.cs
+builder.Services.AddRateLimiter(opt =>
+{
+    opt.AddPolicy("otp-verify", ctx =>
+        RateLimitPartition.GetSlidingWindowLimiter(
+            partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new SlidingWindowRateLimiterOptions
+            {
+                Window            = TimeSpan.FromMinutes(10),
+                SegmentsPerWindow = 5,
+                PermitLimit       = 10,
+                QueueLimit        = 0
+            }));
+
+    opt.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    opt.OnRejected = async (ctx, token) =>
+    {
+        ctx.HttpContext.Response.Headers["Retry-After"] = "60";
+        await ctx.HttpContext.Response.WriteAsJsonAsync(
+            new { error = "TOO_MANY_REQUESTS",
+                  description = "Too many OTP verification attempts. Try again in 10 minutes." },
+            token);
+    };
+});
+
+// Middleware pipeline — must precede auth
+app.UseRateLimiter();
+
+// Endpoint
+group.MapPost("/otp/verify", VerifyOtp)
+     .RequireRateLimiting("otp-verify");
+```
+
+The two-layer defence (IP rate limit + per-token attempt counter) addresses the OWASP 2025 real-world finding: "no rate limiting on OTP verification endpoint."
+
+### E4 — Pipeline reorder: TenantAuth before Validation (Critical / OWASP A01:2025)
+
+`ServiceCollectionExtensions` registers behaviors in this order (outermost first):
+
+```csharp
+services.AddTransient(typeof(IPipelineBehavior<,>), typeof(TenantAuthorizationBehavior<,>));
+services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
+services.AddTransient(typeof(IPipelineBehavior<,>), typeof(TokenBudgetBehavior<,>));
+services.AddTransient(typeof(IPipelineBehavior<,>), typeof(DailyBudgetBehavior<,>));
+services.AddTransient(typeof(IPipelineBehavior<,>), typeof(LoopDetectionBehavior<,>));
+services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ApprovalBehavior<,>));
+services.AddTransient(typeof(IPipelineBehavior<,>), typeof(AuditBehavior<,>));
+```
+
+Unauthorized callers receive `401 UNAUTHORIZED` before they receive any `400 VALIDATION_ERROR` field-level detail.
+
+### E5 — DailyBudgetBehavior (High)
+
+`DailyBudgetBehavior<TRequest, TResponse>` enforces `Tenant.DailyToolCallBudget`. It runs after `TokenBudgetBehavior` and before `LoopDetectionBehavior`.
+
+```csharp
+// Uses COUNT(*) on today's ToolInvocationRecords for the tenant.
+// DailyToolCallBudget == 0 means no cap — tenant unrestricted.
+if (todayCount >= tenant.DailyToolCallBudget)
+    return Fail(cmd, new ToolError("DAILY_BUDGET_EXCEEDED",
+        $"Tenant '{cmd.TenantId}' has reached its daily tool-call budget " +
+        $"of {tenant.DailyToolCallBudget}. Budget resets at midnight UTC.", 429));
+```
+
+**Performance note:** Currently issues one `COUNT(*)` query per request. Phase F replaces this with a Redis `INCR` counter keyed on `tenantId + date` for O(1) distributed enforcement.
+
+### E6 — RFC 7231 §6.3.3 compliance on 202 response (High)
+
+```csharp
+// ToolEndpoints.cs — InvokeTool handler
+if (response.PendingInvocationId.HasValue)
+{
+    var pollUrl = $"/invocations/{response.PendingInvocationId}/status";
+    ctx.Response.Headers["Retry-After"] = "10";          // ← E6: guides client polling
+    return Results.Accepted(pollUrl, new               // ← Results.Accepted sets Location header
+    {
+        status       = "pending_approval",
+        invocationId = response.PendingInvocationId,
+        pollUrl,
+        message      = response.Error?.Description
+    });
+}
+```
+
+`Results.Accepted(location, value)` sets the `Location` response header automatically. `Retry-After: 10` (seconds) guides clients to a 10-second initial poll interval with recommended exponential back-off thereafter.
+
+### E7 — Startup security validation (High)
+
+Two hard-fail checks added to `Program.cs` that prevent the API from accepting traffic when misconfigured.
+
+```csharp
+// JWT key entropy — checked immediately after config binding
+if (Encoding.UTF8.GetBytes(jwt.Secret).Length < 32)
+    throw new InvalidOperationException(
+        "Jwt:Secret must be at least 32 bytes (256 bits). " +
+        "Generate a secure key: openssl rand -base64 32");
+
+// BaseUrl HTTPS — checked after app is built, non-dev only
+if (!app.Environment.IsDevelopment())
+{
+    var approvalOpts = app.Services
+        .GetRequiredService<IOptions<ApprovalOptions>>().Value;
+    if (!approvalOpts.BaseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException(
+            "Approval:BaseUrl must use HTTPS in non-development environments. " +
+            "Magic links sent over HTTP are vulnerable to interception.");
+}
+```
+
+### E8 — OTP context propagated through approval
+
+`AsyncApprovalGate` now calls `SaveChangesAsync` twice: once to persist the new `PendingApproval` row, and once after `channel.SendAsync` to persist any OTP hash written by `EmailOtpChannel`. This prevents a race condition where the record existed but the OTP hash was absent on the first verify attempt.
+
+```csharp
+// AsyncApprovalGate.cs — simplified
+await _repo.AddAsync(pending, ct);
+await _uow.SaveChangesAsync(ct);          // persist record + Id
+
+await _channelSelector.SelectChannel(context.TenantId)
+    .SendAsync(pending, context, ct);     // EmailOtpChannel writes OtpHash here
+
+await _uow.SaveChangesAsync(ct);          // persist OtpHash
+```
+
+---
+
+### Phase E — compliance coverage
+
+| Item | Standard | Status |
+|---|---|---|
+| E1 — CSPRNG token | OWASP Secrets Management | ✅ |
+| E2 — OTP lockout | OWASP MFA Cheat Sheet | ✅ |
+| E3 — OTP rate limiting | OWASP Top 10 2025 A05 | ✅ |
+| E4 — Auth before Validation | OWASP A01:2025 | ✅ |
+| E5 — Daily budget enforcement | SOC 2 CC6 (resource controls) | ✅ |
+| E6 — RFC 7231 202 headers | RFC 7231 §6.3.3 / Azure Async pattern | ✅ |
+| E7 — JWT key length validation | NIST SP 800-131A (min 112-bit) | ✅ |
+| E7 — BaseUrl HTTPS validation | OWASP Transport Layer Security | ✅ |
+| E8 — OTP hash persistence timing | Internal reliability | ✅ |
+
+---
+
+---
+
+## 17. Provider Abstractions — Phase F
+
+Phase F makes ToolEngine production-ready: modular database/cache providers, per-request tenant caching, deny-by-default namespace policy, idempotent approvals, and at-least-once channel delivery via outbox.
+
+### F1 — Modular database provider
+
+The database provider is selected via `"Database:Provider"` in `appsettings.json`. No code changes are required to switch providers.
+
+```json
+{
+  "Database": {
+    "Provider": "sqlite"
+  },
+  "ConnectionStrings": {
+    "Default": "Data Source=toolengine-dev.db"
+  }
+}
+```
+
+| Provider value | Database | Connection string key |
+|---|---|---|
+| `sqlite` (default) | SQLite | `ConnectionStrings:Default` |
+| `postgresql` | PostgreSQL (Npgsql) | `ConnectionStrings:Default` |
+| `sqlserver` | SQL Server | `ConnectionStrings:Default` |
+
+### F2 — EF Core migrations (production)
+
+`EnsureCreated()` is used in development only. Production uses `MigrateAsync()` at startup, which applies any pending EF Core migrations automatically.
+
+Creating the initial migration:
+
+```bash
+dotnet ef migrations add InitialCreate \
+  --project src/Infrastructure/ToolEngine.Infrastructure \
+  --startup-project src/Hosts/ToolEngine.Api
+
+dotnet ef database update \
+  --startup-project src/Hosts/ToolEngine.Api
+```
+
+### F3 — Cache provider abstraction
+
+`ICacheProvider` in `Core.Abstractions.Common` decouples the loop detection and future caching behaviors from the cache backend.
+
+```json
+{
+  "Cache": {
+    "Provider": "memory"
+  },
+  "ConnectionStrings": {
+    "Redis": "localhost:6379"
+  }
+}
+```
+
+| Provider value | Backend | Use case |
+|---|---|---|
+| `memory` (default) | `IMemoryCache` | Development, single-node |
+| `redis` | `IDistributedCache` / StackExchange.Redis | Production, multi-pod |
+
+The Redis provider requires an additional registration in `Program.cs` (already included):
+```csharp
+builder.Services.AddStackExchangeRedisCache(opt => opt.Configuration = redisConnStr);
+builder.Services.AddDistributedCacheProvider(); // from Infrastructure extension
+```
+
+### F4 — LoopDetectionBehavior → ICacheProvider
+
+`LoopDetectionBehavior` now stores its counter in `ICacheProvider` instead of a static `ConcurrentDictionary`. The key pattern is `loop:{correlationId}:{namespace}.{name}` with a 10-minute TTL.
+
+When `"Cache:Provider": "redis"` is configured, loop detection state is shared across all pods — a loop that spans multiple API instances is correctly detected.
+
+### F5 — Scoped Tenant cache (CachedTenantReadRepository)
+
+`CachedTenantReadRepository` is a scoped decorator over `ReadRepository<Tenant, string>`. It holds a `Dictionary<string, Tenant?>` per-request lifetime. The first call to `GetByIdAsync` hits the database; all subsequent calls within the same HTTP request return the cached value.
+
+This eliminates the duplicate DB read that previously occurred across `TenantAuthorizationBehavior`, `TokenBudgetBehavior`, and `DailyBudgetBehavior` on every invocation.
+
+### F6 — Deny-by-default namespace allowlist
+
+Namespace policy is now **deny-by-default** (aligned with AWS SaaS prescriptive guidance):
+
+| `AllowedNamespaces` value | Access |
+|---|---|
+| Empty list (new tenant default) | No namespaces permitted |
+| `["*"]` | All namespaces permitted (unrestricted) |
+| `["math", "weather"]` | Only `math` and `weather` namespaces |
+
+Seed dev tenants with `AllowNamespace("*")`. Production tenants receive explicit grants:
+
+```csharp
+tenant.AllowNamespace("hr");
+tenant.AllowNamespace("finance");
+// tenant does NOT have access to "infrastructure" or "admin"
+```
+
+### F7 — Outbox pattern for channel notifications
+
+`AsyncApprovalGate` no longer calls `channel.SendAsync` directly. Instead, it writes a `PendingApproval` and an `OutboxMessage` to the database **in a single `SaveChangesAsync` call** — atomically.
+
+`NotificationDispatchService` (IHostedService) polls every 15 seconds, reads unsent `OutboxMessages`, and calls `channel.SendAsync`. Failures are retried with exponential back-off:
+
+| Attempt | Wait |
+|---|---|
+| 1 | 30 seconds |
+| 2 | 2 minutes |
+| 3 | 8 minutes |
+| 4 | 32 minutes |
+| 5 | 2 hours (max) |
+
+After 5 consecutive failures, the message is abandoned and logged. The `PendingApproval` remains in `Pending` status — an operator can manually re-trigger.
+
+**Reliability guarantee:** If the process crashes between `SaveChangesAsync` (row committed) and the channel call, the unsent `OutboxMessage` is picked up on the next dispatch cycle. The approver receives the notification with at most one dispatch cycle of delay (≤ 15 seconds).
+
+### F8 — Idempotency key
+
+Clients that retry a `POST /tools/{ns}/{name}/{version}/invoke` call (e.g., on network timeout) should send an `Idempotency-Key` header. If an existing `PendingApproval` with the same key + tenant + tool is found, the gate returns the existing record instead of creating a duplicate.
+
+```http
+POST /tools/hr/update-employee/v1/invoke
+Authorization: Bearer {token}
+Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
+Content-Type: application/json
+
+{ "employeeId": "E12345", "department": "Engineering" }
+```
+
+On the first call: creates `PendingApproval` with the key, returns `202`.
+On retry with the same key: returns `202` pointing to the same `PendingApproval`. No duplicate approval, no duplicate notification.
+
+### F9 — Pagination on IReadRepository
+
+`IReadRepository<TEntity, TId>` now includes `PagedListAsync`:
+
+```csharp
+var page = await approvalRepo.PagedListAsync(
+    new LambdaSpecification<PendingApproval>(
+        a => a.TenantId == "acme-corp" && a.Status == ApprovalStatus.Pending),
+    pageNumber: 2,
+    pageSize:   20,
+    ct);
+
+Console.WriteLine(page.Items.Count);    // up to 20
+Console.WriteLine(page.TotalCount);     // total matching rows
+Console.WriteLine(page.TotalPages);     // Math.Ceiling(total / pageSize)
+Console.WriteLine(page.HasNext);        // true if more pages
+Console.WriteLine(page.HasPrevious);    // true if not first page
+```
+
+---
+
+## 18. Observability — Phase G
+
+### G1 — OpenTelemetry tracing (W3C TraceContext)
+
+ToolEngine emits OpenTelemetry spans via a custom `ActivitySource` named `"ToolEngine"`. Spans are automatically linked to incoming HTTP requests via the W3C `traceparent` header — every tool invocation is a child span of the HTTP request span.
+
+Configure the OTLP exporter endpoint:
+
+```json
+{
+  "Otlp": {
+    "Endpoint": "http://otel-collector:4317"
+  }
+}
+```
+
+When `Otlp:Endpoint` is absent, tracing is still active but not exported (useful in development with local Jaeger or Zipkin).
+
+**Custom spans emitted:**
+
+| Span name | Tags | Description |
+|---|---|---|
+| `tool.execute` | tool.fullName, tool.version, tenant.id, correlation.id, invocation.status | Wraps the full tool execution pipeline |
+| `tool.approval.gate` | tool.fullName, tenant.id, approval.risk, approval.decision, approval.invocationId | Human approval gate evaluation |
+
+Both spans are child spans of the `POST /tools/{ns}/{name}/{version}/invoke` HTTP span.
+
+**Automatic instrumentation included:**
+- ASP.NET Core HTTP request spans
+- Outbound HTTP spans (webhook channel calls)
+- Entity Framework Core DB query spans
+
+### G2 — Custom metrics (OTel Meter)
+
+All metrics use the meter name `"ToolEngine"` and follow OTel semantic naming conventions.
+
+| Metric | Type | Unit | Tags |
+|---|---|---|---|
+| `tool.invocation.duration` | Histogram | ms | tool.fullName, tenant.id, invocation.status |
+| `tool.invocation.count` | Counter | {invocation} | tool.fullName, tenant.id, invocation.status |
+| `tool.approval.pending.count` | UpDownCounter | {approval} | tenant.id, approval.risk |
+| `tool.approval.wait.duration` | Histogram | ms | tenant.id, channel, risk, decision |
+| `tool.loop.detection.triggers` | Counter | {trigger} | tool.fullName, tenant.id |
+| `tool.daily.budget.exceeded` | Counter | {event} | tenant.id |
+
+Dashboards (Grafana/Datadog) should query these metrics for:
+- p50 / p95 / p99 invocation latency per tool
+- Pending approval queue depth per tenant
+- Budget exhaustion rate
+- Loop detection circuit-open rate
+
+### G3 — CorrelationId vs TraceId
+
+`CorrelationId` in ToolEngine is the **business correlation** — identifies one logical agent turn or user action, spans multiple HTTP requests.
+
+W3C `TraceId` (set automatically by the OTel SDK) is the **infrastructure trace** — identifies one HTTP request and its child spans.
+
+Both coexist. `CorrelationId` is propagated via the `X-Correlation-Id` request header and as an OTel span tag `correlation.id`. In distributed scenarios, use `TraceId` to find the request in APM and `CorrelationId` to correlate all invocations in an agent workflow.
+
+### G4 — PII masking in Serilog
+
+All structured log string properties are passed through a Serilog destructuring policy that masks email-format strings:
+
+```
+alice@acme.com  →  al***@***.***
+```
+
+This prevents approver email addresses and webhook URLs (which may contain query tokens) from appearing in plaintext log streams shipped to third-party log aggregators (Datadog, Elastic, Splunk).
+
+The policy is registered in `Program.cs`:
+```csharp
+.Destructure.ByTransforming<string>(s =>
+    s.Contains('@')
+        ? $"{s[..2]}***@***.***"
+        : s)
+```
+
+---
+
+## 19. Compliance — Phase H
+
+Phase H implements four compliance obligations across SOC 2, GDPR, EU AI Act, and ISO 42001.
+
+### H1 — Append-only ToolInvocationEvent table (SOC 2)
+
+A separate `ToolInvocationEvent` table captures one immutable row per lifecycle transition (Invoked → Running → Succeeded / Failed / Suspended). The mutable `ToolInvocationRecord` is retained for operational queries; the event table is the authoritative SOC 2 audit trail.
+
+**Design constraints:**
+- No mutation methods on `ToolInvocationEvent` — all properties are private-set.
+- The application DB user should hold INSERT permission only on this table (no UPDATE or DELETE). Enforced out-of-band in the deployment runbook §4 Database Hardening.
+- `AuditBehavior` emits one event per lifecycle point, batched into the same `SaveChangesAsync` as the record mutation.
+
+```
+Invocation arrives → AuditBehavior: emit Invoked + Running events → handler runs
+                   → emit Succeeded / Failed / Suspended event (with DurationMs)
+```
+
+**Entity:** `ToolEngine.Core.Domain.Entities.ToolInvocationEvent`
+**Configuration:** `ToolInvocationEventConfiguration` (indexes on CorrelationId, TenantId+OccurredAt, InvocationRecordId)
+**Registration:** `IRepository<ToolInvocationEvent, Guid>` + `IReadRepository<ToolInvocationEvent, Guid>` in `ServiceCollectionExtensions`
+
+**Regulatory basis:** SOC 2 CC6.2 (logical access controls), NIST Cyber AI Profile (traceability), EU AI Act Article 17 (logging for high-risk AI systems).
+
+---
+
+### H2 — GDPR anonymisation + RetainUntil (ToolInvocationRecord)
+
+Every `ToolInvocationRecord` now carries:
+
+| Property | Type | Purpose |
+|---|---|---|
+| `RetainUntil` | `DateTimeOffset` | Earliest permitted deletion/anonymisation date (default: InvokedAt + 90 days) |
+| `IsAnonymized` | `bool` | Set to `true` after `Anonymize()` has been called |
+
+**`Anonymize()` method:**
+```csharp
+public void Anonymize()
+{
+    if (IsAnonymized) return;
+    UserId                 = "[anonymized]";
+    ErrorMessage           = null;
+    GovernanceMetadataJson = null;
+    IsAnonymized           = true;
+}
+```
+
+The method is idempotent. A background retention sweep job queries:
+```sql
+WHERE RetainUntil <= @today AND IsAnonymized = false
+```
+and calls `Anonymize()` on each record. The event table is exempt from anonymisation — it stores no user PII beyond `UserId`, which is needed for legal accountability (GDPR Recital 26).
+
+**Regulatory basis:** GDPR Article 17 (right to erasure), Article 5(1)(e) (storage limitation).
+
+---
+
+### H3 — EU AI Act Article 14 Acknowledgement (PendingApproval)
+
+For `High` and `Critical` risk tools, `AsyncApprovalGate` generates and persists an `AcknowledgementStatement` JSON blob on the `PendingApproval` record before dispatching the notification. This documents that the approving operator was informed of the risk classification and regulatory basis at the time of the approval request.
+
+**`AcknowledgementStatement` record:**
+```csharp
+public sealed record AcknowledgementStatement(
+    string         RegulatoryBasis,    // "EU AI Act Article 14 §4 — Human Oversight"
+    ApprovalRisk   RiskLevel,          // High / Critical
+    string         ToolFullName,       // "payments.charge-card"
+    string         OperatorStatement,  // Human-readable oversight declaration
+    DateTimeOffset IssuedAt);          // UTC timestamp
+```
+
+The JSON is stored in `PendingApproval.AcknowledgementJson` and survives the lifecycle of the approval record. It is not subject to GDPR anonymisation.
+
+**Gate logic:**
+```csharp
+if (risk >= ApprovalRisk.High)
+{
+    var ack = new AcknowledgementStatement(
+        RegulatoryBasis:   "EU AI Act Article 14 §4 — Human Oversight",
+        RiskLevel:         risk,
+        ToolFullName:      context.ToolFullName,
+        OperatorStatement: "...",
+        IssuedAt:          DateTimeOffset.UtcNow);
+    pending.SetAcknowledgement(JsonSerializer.Serialize(ack));
+}
+```
+
+**Regulatory basis:** EU AI Act Article 14 §4 (human oversight measures for high-risk AI systems).
+
+---
+
+### H4 — Agent identity claims (`CallerType`)
+
+A new `CallerType` enum distinguishes invocation origins:
+
+```csharp
+public enum CallerType
+{
+    Human         = 0,   // human via UI or direct API
+    AiAgent       = 1,   // autonomous AI agent
+    SystemService = 2    // scheduler / background job
+}
+```
+
+**Flow:**
+1. JWT includes claim `caller_type` with value `"human"`, `"ai_agent"`, or `"system_service"`.
+2. `ToolEndpoints.InvokeTool` maps the claim to `CallerType` and passes it on `ExecuteToolCommand`.
+3. `AuditBehavior` writes `CallerType` to both `ToolInvocationRecord` and every `ToolInvocationEvent`.
+
+This enables dashboards and audit exports to filter AI-generated actions from human-generated ones — a prerequisite for demonstrating human oversight under EU AI Act Article 14.
+
+**Configuration:**
+- JWT issuer must include `caller_type` claim in the token payload.
+- Default (claim absent or unrecognised): `CallerType.Human`.
+
+---
+
+### H5 — ISO 42001 AI Governance Metadata
+
+Callers may supply an optional `X-Governance-Metadata` header containing a JSON blob that describes the AI model, agent id, deployment context, or any ISO 42001-required governance attributes.
+
+```
+X-Governance-Metadata: {"model":"claude-opus-4","agentId":"acme-billing-agent","policyVersion":"2026.1"}
+```
+
+The value is stored verbatim in:
+- `ToolInvocationRecord.GovernanceMetadataJson`
+- `ToolInvocationEvent.GovernanceMetadataJson`
+
+No schema is enforced — the platform is a neutral carrier. Downstream compliance tooling (SIEM, CSPM) parses and validates the blob against the organisation's ISO 42001 control set.
+
+**Anonymisation note:** `GovernanceMetadataJson` is nulled by `ToolInvocationRecord.Anonymize()` after `RetainUntil` passes, as it may contain agent identifiers that qualify as personal data.
+
+---
+
+### H — File inventory
+
+| File | Change |
+|---|---|
+| `Core.Domain/Enums/CallerType.cs` | New — H4 |
+| `Core.Domain/Enums/InvocationEventType.cs` | New — H1 |
+| `Core.Domain/Entities/ToolInvocationEvent.cs` | New — H1, H4, H5 |
+| `Core.Domain/Contracts/AcknowledgementStatement.cs` | New — H3 |
+| `Core.Domain/Entities/ToolInvocationRecord.cs` | RetainUntil, IsAnonymized, Anonymize(), CallerType, GovernanceMetadataJson — H2, H4, H5 |
+| `Core.Domain/Entities/PendingApproval.cs` | AcknowledgementJson, SetAcknowledgement() — H3 |
+| `Application/Abstractions/IExecuteToolCommand.cs` | CallerType, GovernanceMetadataJson — H4, H5 |
+| `Application/Commands/ExecuteToolCommand.cs` | CallerType, GovernanceMetadataJson params — H4, H5 |
+| `Application/Behaviors/AuditBehavior.cs` | EmitEventAsync(), IRepository<ToolInvocationEvent> dep, CallerType, GovernanceMetadataJson propagation — H1, H4, H5 |
+| `Infrastructure/Persistence/AppDbContext.cs` | DbSet<ToolInvocationEvent> — H1 |
+| `Infrastructure/Persistence/Configurations/ToolInvocationEventConfiguration.cs` | New — H1 |
+| `Infrastructure/Persistence/Configurations/ToolInvocationRecordConfiguration.cs` | CallerType, RetainUntil, IsAnonymized, GovernanceMetadataJson columns — H2, H4, H5 |
+| `Infrastructure/Persistence/Configurations/PendingApprovalConfiguration.cs` | AcknowledgementJson column — H3 |
+| `Infrastructure/Approval/AsyncApprovalGate.cs` | AcknowledgementStatement generation for High/Critical — H3 |
+| `Infrastructure/Extensions/ServiceCollectionExtensions.cs` | Register IRepository/IReadRepository<ToolInvocationEvent> — H1 |
+| `Hosts/Api/Endpoints/ToolEndpoints.cs` | Read caller_type claim, X-Governance-Metadata header — H4, H5 |
 
 ---
 

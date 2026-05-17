@@ -96,4 +96,18 @@ internal sealed class InMemoryUserRepository
         ToolEngine.Core.Abstractions.Persistence.ISpecification<User> spec,
         CancellationToken ct = default) =>
         Task.FromResult(_seed.Count(u => spec.Criteria.Compile()(u)));
+
+    public Task<ToolEngine.Core.Abstractions.Persistence.PagedResult<User>> PagedListAsync(
+        ToolEngine.Core.Abstractions.Persistence.ISpecification<User> spec,
+        int pageNumber, int pageSize,
+        CancellationToken ct = default)
+    {
+        if (pageNumber < 1) pageNumber = 1;
+        if (pageSize   < 1) pageSize   = 10;
+        var filtered = _seed.Where(u => spec.Criteria.Compile()(u)).ToList();
+        var items    = filtered.Skip((pageNumber - 1) * pageSize).Take(pageSize).ToList();
+        return Task.FromResult(
+            new ToolEngine.Core.Abstractions.Persistence.PagedResult<User>(
+                items, filtered.Count, pageNumber, pageSize));
+    }
 }

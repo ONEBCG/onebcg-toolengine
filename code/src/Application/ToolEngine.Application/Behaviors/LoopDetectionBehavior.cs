@@ -1,18 +1,24 @@
 namespace ToolEngine.Application.Behaviors;
 
-using System.Collections.Concurrent;
+using System.Diagnostics;
 using MediatR;
 using Microsoft.Extensions.Options;
 using ToolEngine.Application.Abstractions;
+using ToolEngine.Application.Telemetry;
+using ToolEngine.Core.Abstractions.Common;
 using ToolEngine.Core.Domain.Contracts;
 
 /// <summary>
 /// Detects agent-driven tool call loops within a single correlation context.
-/// A correlation represents one agent turn; if the same tool is invoked more
-/// than MaxCallsPerCorrelation times the circuit opens and an error is returned.
+/// A correlation represents one agent turn; if the same tool is invoked more than
+/// MaxCallsPerCorrelation times the circuit opens.
 ///
-/// State is in-process. For distributed deployments replace the static dict
-/// with a distributed cache (Redis) keyed on correlationId + toolFullName.
+/// State is stored in ICacheProvider:
+///   - Memory  (default): in-process, correct for single-pod.
+///   - Redis   ("Cache:Provider": "redis"): distributed, correct for multi-pod.
+///
+/// Key pattern: "loop:{correlationId}:{namespace}.{name}"
+/// TTL:         10 minutes (one agent turn lifetime).
 /// </summary>
 public sealed class LoopDetectionOptions
 {
@@ -23,13 +29,16 @@ public sealed class LoopDetectionBehavior<TRequest, TResponse>
     : IPipelineBehavior<TRequest, TResponse>
     where TRequest : notnull
 {
-    // Process-scoped — correlationId naturally bounds the detection window.
-    private static readonly ConcurrentDictionary<string, int> _counter = new();
+    private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(10);
 
-    private readonly LoopDetectionOptions _options;
+    private readonly ICacheProvider        _cache;
+    private readonly LoopDetectionOptions  _options;
 
-    public LoopDetectionBehavior(IOptions<LoopDetectionOptions> options)
-        => _options = options.Value;
+    public LoopDetectionBehavior(ICacheProvider cache, IOptions<LoopDetectionOptions> options)
+    {
+        _cache   = cache;
+        _options = options.Value;
+    }
 
     public async Task<TResponse> Handle(
         TRequest                          request,
@@ -39,12 +48,19 @@ public sealed class LoopDetectionBehavior<TRequest, TResponse>
         if (request is not IExecuteToolCommand cmd)
             return await next();
 
-        var key   = $"{cmd.CorrelationId}:{cmd.ToolNamespace}.{cmd.ToolName}";
-        var count = _counter.AddOrUpdate(key, 1, (_, v) => v + 1);
+        var key   = $"loop:{cmd.CorrelationId}:{cmd.ToolNamespace}.{cmd.ToolName}";
+        var count = await _cache.IncrementAsync(key, Ttl, ct);
 
         if (count > _options.MaxCallsPerCorrelation)
         {
-            _counter.TryRemove(key, out _);
+            await _cache.RemoveAsync(key, ct);
+            // G2 — loop detection metric
+            ToolEngineTelemetry.LoopDetectionTriggers.Add(1,
+                new TagList
+                {
+                    { "tool.fullName", $"{cmd.ToolNamespace}.{cmd.ToolName}" },
+                    { "tenant.id",     cmd.TenantId }
+                });
             return Fail(cmd, new ToolError(
                 "AGENT_LOOP_DETECTED",
                 $"Tool '{cmd.ToolNamespace}.{cmd.ToolName}' called {count} times " +
@@ -59,9 +75,8 @@ public sealed class LoopDetectionBehavior<TRequest, TResponse>
         }
         finally
         {
-            // Prune at threshold to prevent unbounded memory growth in long-running processes.
             if (count >= _options.MaxCallsPerCorrelation)
-                _counter.TryRemove(key, out _);
+                await _cache.RemoveAsync(key, ct);
         }
 
         return result;

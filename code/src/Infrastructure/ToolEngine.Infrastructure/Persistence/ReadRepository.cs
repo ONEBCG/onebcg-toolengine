@@ -39,4 +39,28 @@ internal sealed class ReadRepository<TEntity, TId>
         CancellationToken ct = default) =>
         _ctx.Set<TEntity>().AsNoTracking()
             .CountAsync(spec.Criteria, ct);
+
+    public async Task<PagedResult<TEntity>> PagedListAsync(
+        ISpecification<TEntity> spec,
+        int pageNumber,
+        int pageSize,
+        CancellationToken ct = default)
+    {
+        if (pageNumber < 1) pageNumber = 1;
+        if (pageSize   < 1) pageSize   = 10;
+
+        var query = _ctx.Set<TEntity>().AsNoTracking().Where(spec.Criteria);
+
+        foreach (var include in spec.Includes)
+            query = query.Include(include);
+
+        var totalCount = await query.CountAsync(ct);
+
+        var items = await query
+            .Skip((pageNumber - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return new PagedResult<TEntity>(items, totalCount, pageNumber, pageSize);
+    }
 }

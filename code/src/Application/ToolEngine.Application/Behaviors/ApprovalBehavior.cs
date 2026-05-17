@@ -1,7 +1,9 @@
 namespace ToolEngine.Application.Behaviors;
 
+using System.Diagnostics;
 using MediatR;
 using ToolEngine.Application.Abstractions;
+using ToolEngine.Application.Telemetry;
 using ToolEngine.Core.Domain.Contracts;
 using ToolEngine.Tools.Abstractions.Interfaces;
 
@@ -49,12 +51,19 @@ public sealed class ApprovalBehavior<TRequest, TResponse>
             return await next();
 
         var context = new ApprovalContext(
-            CorrelationId: cmd.CorrelationId,
-            TenantId:      cmd.TenantId,
-            UserId:        cmd.UserId,
-            ToolNamespace: cmd.ToolNamespace,
-            ToolName:      cmd.ToolName,
-            ToolVersion:   cmd.ToolVersion);
+            CorrelationId:  cmd.CorrelationId,
+            TenantId:       cmd.TenantId,
+            UserId:         cmd.UserId,
+            ToolNamespace:  cmd.ToolNamespace,
+            ToolName:       cmd.ToolName,
+            ToolVersion:    cmd.ToolVersion,
+            IdempotencyKey: cmd.IdempotencyKey);
+
+        // G1 — approval span (child of the tool.execute span started in AuditBehavior).
+        using var activity = ToolEngineTelemetry.ActivitySource.StartActivity("tool.approval.gate");
+        activity?.SetTag("tool.fullName",   context.ToolFullName);
+        activity?.SetTag("tenant.id",       context.TenantId);
+        activity?.SetTag("approval.risk",   descriptor.Value.ApprovalRisk.ToString());
 
         var decision = await _gate.RequestApprovalAsync(
             context,
@@ -66,15 +75,30 @@ public sealed class ApprovalBehavior<TRequest, TResponse>
 
         // Async path: suspended, awaiting out-of-band decision (email, webhook, dashboard).
         if (decision.Pending && decision.PendingInvocationId.HasValue)
+        {
+            activity?.SetTag("approval.decision",     "suspended");
+            activity?.SetTag("approval.invocationId", decision.PendingInvocationId.ToString());
+            // G2 — increment pending approval gauge
+            ToolEngineTelemetry.PendingApprovalCount.Add(1,
+                new TagList
+                {
+                    { "tenant.id", context.TenantId },
+                    { "approval.risk", descriptor.Value.ApprovalRisk.ToString() }
+                });
             return Suspended(cmd, decision.PendingInvocationId.Value);
+        }
 
         // Synchronous deny (CLI prompt declined, or gate configuration denied).
         if (!decision.Approved)
+        {
+            activity?.SetTag("approval.decision", "denied");
             return Fail(cmd, new ToolError(
                 "APPROVAL_DENIED",
                 decision.Reason ?? $"Human approval was denied for tool '{context.ToolFullName}'.",
                 403));
+        }
 
+        activity?.SetTag("approval.decision", "allowed");
         return await next();
     }
 

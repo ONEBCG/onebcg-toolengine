@@ -7,11 +7,16 @@ using ToolEngine.Core.Domain.Contracts;
 using ToolEngine.Core.Domain.Entities;
 
 /// <summary>
-/// Validates that the requesting tenant is active and is allowed to call the requested
-/// namespace. Runs outermost after ValidationBehavior so auth precedes all business logic.
+/// Validates that the requesting tenant is active and is allowed to call the requested namespace.
+/// Runs outermost (before ValidationBehavior) — auth precedes all business logic (OWASP A01:2025).
 ///
-/// Namespace check: if Tenant.AllowedNamespaces is empty the tenant is unrestricted
-/// (default for dev). If it has entries only those namespaces are permitted.
+/// Namespace allowlist semantics (deny-by-default — F6):
+///   Empty list           → tenant cannot call any namespace.
+///   Contains "*"         → tenant is unrestricted (all namespaces permitted).
+///   Contains "math"      → only the "math" namespace is permitted.
+///
+/// Dev / seed tenants should have AllowedNamespaces = ["*"].
+/// Newly created tenants start with an empty list and must be explicitly granted access.
 /// </summary>
 public sealed class TenantAuthorizationBehavior<TRequest, TResponse>
     : IPipelineBehavior<TRequest, TResponse>
@@ -40,15 +45,23 @@ public sealed class TenantAuthorizationBehavior<TRequest, TResponse>
             return Fail(cmd, new ToolError("UNAUTHORIZED",
                 $"Tenant '{cmd.TenantId}' is inactive.", 403));
 
-        // Namespace restriction — empty list means all namespaces permitted.
-        if (!string.IsNullOrWhiteSpace(cmd.ToolNamespace) &&
-            tenant.AllowedNamespaces.Count > 0 &&
-            !tenant.AllowedNamespaces.Contains(
-                cmd.ToolNamespace, StringComparer.OrdinalIgnoreCase))
+        // Namespace restriction — deny-by-default (F6):
+        //   Empty list  → deny all (no namespaces permitted).
+        //   "*" entry   → allow all.
+        //   Other entry → only that namespace is permitted.
+        if (!string.IsNullOrWhiteSpace(cmd.ToolNamespace))
         {
-            return Fail(cmd, new ToolError("UNAUTHORIZED",
-                $"Tenant '{cmd.TenantId}' is not permitted to use namespace '{cmd.ToolNamespace}'.",
-                403));
+            var allowed = tenant.AllowedNamespaces;
+            var isUnrestricted = allowed.Contains("*", StringComparer.OrdinalIgnoreCase);
+
+            if (!isUnrestricted &&
+                !allowed.Contains(cmd.ToolNamespace, StringComparer.OrdinalIgnoreCase))
+            {
+                return Fail(cmd, new ToolError("UNAUTHORIZED",
+                    $"Tenant '{cmd.TenantId}' is not permitted to use namespace '{cmd.ToolNamespace}'. " +
+                    "Grant access via Tenant.AllowNamespace(\"namespace\") or AllowNamespace(\"*\").",
+                    403));
+            }
         }
 
         return await next();

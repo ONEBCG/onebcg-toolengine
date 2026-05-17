@@ -38,6 +38,12 @@ public sealed class ApprovalChannelSelector
         return Get(_options.DefaultChannel);
     }
 
+    /// <summary>
+    /// Selects a channel directly by type — used by NotificationDispatchService
+    /// when replaying an OutboxMessage that recorded the channel at creation time.
+    /// </summary>
+    public IApprovalChannel SelectByType(ApprovalChannelType type) => Get(type);
+
     private IApprovalChannel Get(ApprovalChannelType type) =>
         _channels.TryGetValue(type, out var ch) ? ch
             : _channels.GetValueOrDefault(ApprovalChannelType.Dashboard)

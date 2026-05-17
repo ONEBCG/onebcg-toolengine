@@ -21,8 +21,20 @@ internal sealed class ToolInvocationRecordConfiguration
         builder.Property(r => r.ErrorCode).HasMaxLength(100);
         builder.Property(r => r.ErrorMessage).HasMaxLength(1000);
 
+        // H4 — CallerType: stored as int column.
+        builder.Property(r => r.CallerType).IsRequired();
+
+        // H2 — GDPR retention columns.
+        builder.Property(r => r.RetainUntil).IsRequired();
+        builder.Property(r => r.IsAnonymized).IsRequired();
+
+        // H5 — ISO 42001 governance metadata. Unconstrained JSON blob; nullable.
+        builder.Property(r => r.GovernanceMetadataJson);
+
         builder.HasIndex(r => r.CorrelationId);
         builder.HasIndex(r => new { r.TenantId, r.InvokedAt });
+        // H2 — Retention sweep job queries by RetainUntil + IsAnonymized.
+        builder.HasIndex(r => new { r.RetainUntil, r.IsAnonymized });
 
         builder.Ignore(r => r.DomainEvents);
     }

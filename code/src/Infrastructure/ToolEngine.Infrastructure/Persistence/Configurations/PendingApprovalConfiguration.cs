@@ -21,8 +21,12 @@ internal sealed class PendingApprovalConfiguration
         builder.Property(p => p.ApproverEmail).HasMaxLength(320);
         builder.Property(p => p.ApprovalReason).HasMaxLength(500).IsRequired();
         builder.Property(p => p.SerializedResult);
+        builder.Property(p => p.FailedOtpAttempts); // int defaults to 0 — no relational override needed
 
-        // ToolFullName is a computed property — not stored.
+        // H3 — EU AI Act Article 14 acknowledgement JSON. Set for High/Critical risk tools only.
+        builder.Property(p => p.AcknowledgementJson);
+
+        // ToolFullName and IsExpired are computed — not stored.
         builder.Ignore(p => p.ToolFullName);
         builder.Ignore(p => p.IsExpired);
         builder.Ignore(p => p.DomainEvents);

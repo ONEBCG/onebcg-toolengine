@@ -5,6 +5,8 @@ using ToolEngine.Core.Domain.Common;
 using ToolEngine.Core.Domain.Contracts;
 using ToolEngine.Core.Domain.Enums;
 
+// H2: GDPR retention  H4: Agent identity  H5: ISO 42001 governance metadata
+
 /// <summary>
 /// Audit aggregate. One record per tool invocation.
 /// Written by the AuditBehavior in the MediatR pipeline.
@@ -20,18 +22,24 @@ public sealed class ToolInvocationRecord : AggregateRoot<Guid>
         string         toolName,
         string         toolVersion,
         ToolType       toolType,
-        DateTimeOffset invokedAt)
+        CallerType     callerType,
+        DateTimeOffset invokedAt,
+        string?        governanceMetadataJson,
+        DateTimeOffset retainUntil)
         : base(id)
     {
-        CorrelationId = correlationId;
-        TenantId      = tenantId;
-        UserId        = userId;
-        ToolNamespace = toolNamespace;
-        ToolName      = toolName;
-        ToolVersion   = toolVersion;
-        ToolType      = toolType;
-        Status        = ToolStatus.Pending;
-        InvokedAt     = invokedAt;
+        CorrelationId          = correlationId;
+        TenantId               = tenantId;
+        UserId                 = userId;
+        ToolNamespace          = toolNamespace;
+        ToolName               = toolName;
+        ToolVersion            = toolVersion;
+        ToolType               = toolType;
+        CallerType             = callerType;
+        Status                 = ToolStatus.Pending;
+        InvokedAt              = invokedAt;
+        GovernanceMetadataJson = governanceMetadataJson;
+        RetainUntil            = retainUntil;
     }
 
     public Guid            CorrelationId { get; private set; }
@@ -45,6 +53,8 @@ public sealed class ToolInvocationRecord : AggregateRoot<Guid>
                                                : $"{ToolNamespace}.{ToolName}";
     public string          ToolVersion   { get; private set; }
     public ToolType        ToolType      { get; private set; }
+    /// <summary>H4 — Human vs AiAgent identity sourced from JWT claim "caller_type".</summary>
+    public CallerType      CallerType    { get; private set; }
     public ToolStatus      Status        { get; private set; }
     public DateTimeOffset  InvokedAt     { get; private set; }
     public DateTimeOffset? CompletedAt   { get; private set; }
@@ -54,6 +64,14 @@ public sealed class ToolInvocationRecord : AggregateRoot<Guid>
     public int             RetryCount    { get; private set; }
     public string?         ErrorCode     { get; private set; }
     public string?         ErrorMessage  { get; private set; }
+    // ── H2 GDPR retention ────────────────────────────────────────────────────
+    /// <summary>H2 — Earliest UTC date this record may be deleted or anonymised.</summary>
+    public DateTimeOffset  RetainUntil   { get; private set; }
+    /// <summary>H2 — Set to true after Anonymize() has been called; PII fields are then nulled.</summary>
+    public bool            IsAnonymized  { get; private set; }
+    // ── H5 ISO 42001 governance metadata ─────────────────────────────────────
+    /// <summary>H5 — JSON blob from X-Governance-Metadata header. Nullable; not all callers supply it.</summary>
+    public string?         GovernanceMetadataJson { get; private set; }
 
     public static ToolInvocationRecord Create(
         Guid              correlationId,
@@ -63,9 +81,14 @@ public sealed class ToolInvocationRecord : AggregateRoot<Guid>
         string            toolName,
         string            toolVersion,
         ToolType          toolType,
-        IDateTimeProvider clock) =>
+        IDateTimeProvider clock,
+        CallerType        callerType             = CallerType.Human,
+        string?           governanceMetadataJson = null,
+        int               retentionDays          = 90) =>
         new(Guid.NewGuid(), correlationId, tenantId, userId,
-            toolNamespace, toolName, toolVersion, toolType, clock.UtcNow);
+            toolNamespace, toolName, toolVersion, toolType, callerType,
+            clock.UtcNow, governanceMetadataJson,
+            clock.UtcNow.AddDays(retentionDays));
 
     public void MarkRunning() => Status = ToolStatus.Running;
 
@@ -91,5 +114,23 @@ public sealed class ToolInvocationRecord : AggregateRoot<Guid>
     {
         Status      = ToolStatus.Cancelled;
         CompletedAt = clock.UtcNow;
+    }
+
+    /// <summary>
+    /// H2 — GDPR erasure / anonymisation sweep.
+    /// Nulls all fields that may contain personal data. Idempotent.
+    /// The record structure is retained for SOC 2 completeness counts;
+    /// only the PII is removed. Per GDPR Article 17 "right to erasure".
+    ///
+    /// Call only after RetainUntil has passed, verified by the retention sweep job.
+    /// </summary>
+    public void Anonymize()
+    {
+        if (IsAnonymized) return;
+
+        UserId                 = "[anonymized]";
+        ErrorMessage           = null;
+        GovernanceMetadataJson = null;
+        IsAnonymized           = true;
     }
 }

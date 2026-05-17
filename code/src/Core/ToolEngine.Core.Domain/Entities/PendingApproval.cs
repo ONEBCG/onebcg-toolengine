@@ -1,5 +1,6 @@
 namespace ToolEngine.Core.Domain.Entities;
 
+using System.Security.Cryptography;
 using ToolEngine.Core.Domain.Common;
 using ToolEngine.Core.Domain.Enums;
 
@@ -43,7 +44,9 @@ public sealed class PendingApproval : AggregateRoot<Guid>
         ApprovalReason  = approvalReason;
         ApproverEmail   = approverEmail;
         Status          = ApprovalStatus.Pending;
-        ApprovalToken   = Guid.NewGuid().ToString("N"); // URL-safe opaque token
+        // 256-bit CSPRNG token — 64 hex chars. Satisfies OWASP minimum entropy for
+        // passwordless authentication tokens. Never use Guid.NewGuid() (only 122 bits).
+        ApprovalToken   = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         ExpiresAt       = expiresAt;
         CreatedAt       = DateTimeOffset.UtcNow;
     }
@@ -70,7 +73,12 @@ public sealed class PendingApproval : AggregateRoot<Guid>
     public DateTimeOffset?     DecidedAt       { get; private set; }
     public string?             DecidedByUserId { get; private set; }
     // JSON-serialized ToolResponse<JsonElement> written after approved execution.
-    public string?             SerializedResult { get; private set; }
+    public string?             SerializedResult    { get; private set; }
+    // Count of failed OTP verification attempts. Approval is expired after MaxOtpAttempts.
+    public int                 FailedOtpAttempts   { get; private set; }
+    // Client-supplied idempotency key. When set, AsyncApprovalGate will return this
+    // record on retry instead of creating a duplicate (F8).
+    public string?             IdempotencyKey      { get; private set; }
 
     public bool IsExpired => DateTimeOffset.UtcNow >= ExpiresAt && Status == ApprovalStatus.Pending;
 
@@ -86,10 +94,16 @@ public sealed class PendingApproval : AggregateRoot<Guid>
         ApprovalRisk        risk,
         string              approvalReason,
         string?             approverEmail,
-        int                 timeoutMinutes = 60) =>
-        new(correlationId, tenantId, userId, toolNamespace, toolName, toolVersion,
+        int                 timeoutMinutes = 60,
+        string?             idempotencyKey = null)
+    {
+        var pending = new PendingApproval(
+            correlationId, tenantId, userId, toolNamespace, toolName, toolVersion,
             serializedInput, channel, risk, approvalReason, approverEmail,
             DateTimeOffset.UtcNow.AddMinutes(timeoutMinutes));
+        pending.IdempotencyKey = idempotencyKey;
+        return pending;
+    }
 
     public Result Approve(string decidedByUserId)
     {
@@ -125,4 +139,34 @@ public sealed class PendingApproval : AggregateRoot<Guid>
     public void SetOtpHash(string otpHash) => OtpHash = otpHash;
 
     public void SetResult(string serializedResult) => SerializedResult = serializedResult;
+
+    /// <summary>
+    /// H3 — Stores the EU AI Act Article 14 acknowledgement JSON.
+    /// Required for High and Critical risk tools. The JSON is the serialised
+    /// AcknowledgementStatement and is immutable once set.
+    /// </summary>
+    public string? AcknowledgementJson { get; private set; }
+
+    public void SetAcknowledgement(string acknowledgementJson)
+    {
+        if (AcknowledgementJson is not null) return; // immutable once set
+        AcknowledgementJson = acknowledgementJson;
+    }
+
+    /// <summary>
+    /// Records a failed OTP attempt. Returns true when the maximum number of
+    /// attempts is reached — caller must persist and return HTTP 410.
+    /// Implements OWASP MFA Cheat Sheet: lock out after N failures to prevent
+    /// brute-force of a 6-digit OTP space (10^6 possible values).
+    /// </summary>
+    public bool IncrementFailedOtpAttempts(int maxAttempts = 5)
+    {
+        FailedOtpAttempts++;
+        if (FailedOtpAttempts >= maxAttempts)
+        {
+            Expire();
+            return true;
+        }
+        return false;
+    }
 }

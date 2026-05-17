@@ -2,22 +2,30 @@ namespace ToolEngine.Infrastructure.Extensions;
 
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using ToolEngine.Core.Abstractions.Common;
 using ToolEngine.Core.Abstractions.Persistence;
 using ToolEngine.Core.Abstractions.Security;
 using ToolEngine.Core.Domain.Entities;
 using ToolEngine.Infrastructure.Approval;
+using ToolEngine.Infrastructure.BackgroundServices;
+using ToolEngine.Infrastructure.Cache;
 using ToolEngine.Infrastructure.Common;
 using ToolEngine.Infrastructure.Persistence;
+using ToolEngine.Infrastructure.Persistence.Entities;
 using ToolEngine.Tools.Abstractions.Interfaces;
 
 public static class ServiceCollectionExtensions
 {
     /// <summary>
-    /// Registers infrastructure services. Pass a provider-specific configuration
-    /// action from the composition root, e.g. opt.UseSqlServer(...) or opt.UseNpgsql(...).
-    /// Infrastructure itself has no provider dependency.
+    /// Registers infrastructure services. The composition root supplies the DB provider action:
+    ///   opt.UseSqlite(...)     — development (default)
+    ///   opt.UseNpgsql(...)     — PostgreSQL (production)
+    ///   opt.UseSqlServer(...)  — SQL Server (production)
+    ///
+    /// Cache provider (ICacheProvider) must be registered by the host BEFORE this call
+    /// when using Redis. If not registered, a default MemoryCacheProvider is added.
     /// </summary>
     public static IServiceCollection AddToolInfrastructure(
         this IServiceCollection         services,
@@ -27,33 +35,51 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<IUnitOfWork, UnitOfWork>();
 
+        // ── Write repositories ───────────────────────────────────────────────
         services.AddScoped<IRepository<Tenant, string>,
                            Repository<Tenant, string>>();
         services.AddScoped<IRepository<ToolInvocationRecord, Guid>,
                            Repository<ToolInvocationRecord, Guid>>();
         services.AddScoped<IRepository<PendingApproval, Guid>,
                            Repository<PendingApproval, Guid>>();
+        services.AddScoped<IRepository<OutboxMessage, Guid>,
+                           Repository<OutboxMessage, Guid>>();
+        // H1 — append-only event log write repository.
+        services.AddScoped<IRepository<ToolInvocationEvent, Guid>,
+                           Repository<ToolInvocationEvent, Guid>>();
 
+        // ── Read repositories ────────────────────────────────────────────────
+        // F5: Tenant uses CachedTenantReadRepository (scoped per-request cache).
+        // Eliminates duplicate DB reads across TenantAuth/TokenBudget/DailyBudget behaviors.
         services.AddScoped<IReadRepository<Tenant, string>,
-                           ReadRepository<Tenant, string>>();
+                           CachedTenantReadRepository>();
         services.AddScoped<IReadRepository<ToolInvocationRecord, Guid>,
                            ReadRepository<ToolInvocationRecord, Guid>>();
         services.AddScoped<IReadRepository<PendingApproval, Guid>,
                            ReadRepository<PendingApproval, Guid>>();
+        services.AddScoped<IReadRepository<OutboxMessage, Guid>,
+                           ReadRepository<OutboxMessage, Guid>>();
+        // H1 — append-only event log read repository.
+        services.AddScoped<IReadRepository<ToolInvocationEvent, Guid>,
+                           ReadRepository<ToolInvocationEvent, Guid>>();
 
         services.AddSingleton<IDateTimeProvider, SystemDateTimeProvider>();
 
-        services.AddSingleton<Microsoft.AspNetCore.Http.IHttpContextAccessor,
-                              Microsoft.AspNetCore.Http.HttpContextAccessor>();
+        services.AddSingleton<IHttpContextAccessor, HttpContextAccessor>();
         services.AddScoped<ICurrentUser, HttpContextCurrentUser>();
 
         // Zero Trust secret vault — dev stub. Replace with AzureKeyVaultSecretVault in prod.
         services.AddSingleton<ISecretVault, NullSecretVault>();
 
+        // ── Cache provider fallback ──────────────────────────────────────────
+        // If the host registered ICacheProvider before calling AddToolInfrastructure,
+        // this block is skipped. Otherwise, MemoryCacheProvider is used (dev default).
+        services.AddMemoryCache();
+        if (!services.Any(d => d.ServiceType == typeof(ICacheProvider)))
+            services.AddSingleton<ICacheProvider, MemoryCacheProvider>();
+
         // ── Approval engine ──────────────────────────────────────────────────
-        // Bind ApprovalOptions from config section "Approval".
-        services.AddOptions<ApprovalOptions>()
-                .BindConfiguration("Approval");
+        services.AddOptions<ApprovalOptions>().BindConfiguration("Approval");
 
         // Email sender — dev stub (logs only). Replace with SendGrid/SES in production.
         services.AddSingleton<IEmailSender, LoggingEmailSender>();
@@ -67,13 +93,29 @@ public static class ServiceCollectionExtensions
         // Channel selector — routes by risk tier and tenant overrides.
         services.AddSingleton<ApprovalChannelSelector>();
 
-        // HTTP client used by WebhookChannel — configure timeout/retry here if needed.
+        // HTTP client used by WebhookChannel.
         services.AddHttpClient("approval-webhook");
 
-        // API approval gate — async, DB-persisted, channel-notified.
+        // API approval gate — async, DB-persisted, outbox-notified.
         // CLI overrides this with ConsoleApprovalGate in Cli/Program.cs.
         services.AddScoped<IHumanApprovalGate, AsyncApprovalGate>();
 
+        // ── Background services ──────────────────────────────────────────────
+        // F7: Outbox dispatch — processes OutboxMessages and delivers channel notifications.
+        services.AddHostedService<NotificationDispatchService>();
+
+        return services;
+    }
+
+    /// <summary>
+    /// Registers the Redis-backed ICacheProvider. Call this BEFORE AddToolInfrastructure
+    /// when "Cache:Provider" = "redis", after registering IDistributedCache (Redis).
+    /// The Infrastructure fallback in AddToolInfrastructure will then skip MemoryCacheProvider.
+    /// </summary>
+    public static IServiceCollection AddDistributedCacheProvider(
+        this IServiceCollection services)
+    {
+        services.AddSingleton<ICacheProvider, DistributedCacheProvider>();
         return services;
     }
 }

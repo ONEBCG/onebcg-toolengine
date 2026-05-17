@@ -33,7 +33,8 @@ public sealed record ApprovalContext(
     string  ToolNamespace,
     string  ToolName,
     string  ToolVersion,
-    string? ApproverEmail = null)
+    string? ApproverEmail    = null,
+    string? IdempotencyKey   = null)
 {
     public string ToolFullName => $"{ToolNamespace}.{ToolName}";
 }

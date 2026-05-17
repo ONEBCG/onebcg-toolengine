@@ -26,9 +26,12 @@ public static class ApprovalEndpoints
              .WithSummary("Approve or deny a pending tool invocation via magic-link token.");
 
         // OTP path: 6-digit code sent to approver's email for Critical-risk tools.
+        // Rate-limited per IP (10 attempts / 10 min). Entity-level counter handles
+        // per-token lockout after 5 failures (OWASP MFA Cheat Sheet).
         group.MapPost("/otp/verify", VerifyOtp)
              .WithName("VerifyApprovalOtp")
-             .WithSummary("Verify an OTP to approve a pending tool invocation.");
+             .WithSummary("Verify an OTP to approve a pending tool invocation.")
+             .RequireRateLimiting("otp-verify");
 
         // Dashboard: authenticated approver views pending approvals for their tenant.
         group.MapGet("/pending", GetPending)
@@ -125,7 +128,18 @@ public static class ApprovalEndpoints
         if (tracked.OtpHash is null ||
             !inputHash.Equals(tracked.OtpHash, StringComparison.Ordinal))
         {
-            return Results.Problem("Invalid OTP.", statusCode: 400, title: "INVALID_OTP");
+            // Increment failure counter. IncrementFailedOtpAttempts returns true
+            // when the max is reached and transitions the approval to Expired.
+            var locked = tracked.IncrementFailedOtpAttempts(maxAttempts: 5);
+            await uow.SaveChangesAsync(ct);
+
+            return locked
+                ? Results.Problem(
+                    "Maximum OTP attempts exceeded. Approval request has been invalidated.",
+                    statusCode: 410, title: "APPROVAL_EXPIRED")
+                : Results.Problem(
+                    $"Invalid OTP. {5 - tracked.FailedOtpAttempts} attempt(s) remaining.",
+                    statusCode: 400, title: "INVALID_OTP");
         }
 
         var result = tracked.Approve(body.ApproverUserId ?? "otp-verified");

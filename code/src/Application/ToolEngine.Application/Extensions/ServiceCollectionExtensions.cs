@@ -16,12 +16,13 @@ public static class ServiceCollectionExtensions
     /// Call after AddToolRegistry() and AddToolExecutor() in the composition root.
     ///
     /// Behavior execution order (outermost → innermost → handler):
-    ///   ValidationBehavior
-    ///   → TenantAuthorizationBehavior
-    ///   → TokenBudgetBehavior
-    ///   → LoopDetectionBehavior
-    ///   → ApprovalBehavior
-    ///   → AuditBehavior
+    ///   TenantAuthorizationBehavior   — auth before validation (OWASP A01:2025)
+    ///   → ValidationBehavior          — only reached by authorised callers
+    ///   → TokenBudgetBehavior         — per-request token cap
+    ///   → DailyBudgetBehavior         — per-tenant daily call cap
+    ///   → LoopDetectionBehavior       — agent loop circuit-breaker
+    ///   → ApprovalBehavior            — human-in-the-loop gate
+    ///   → AuditBehavior               — persist invocation record
     ///   → Handler
     /// </summary>
     public static IServiceCollection AddToolApplication(
@@ -34,17 +35,23 @@ public static class ServiceCollectionExtensions
         services.AddValidatorsFromAssembly(assembly, includeInternalTypes: true);
 
         // Pipeline — register outermost first.
-        services.AddTransient(
-            typeof(IPipelineBehavior<,>),
-            typeof(ValidationBehavior<,>));
-
+        // Auth precedes Validation: unauthorized callers must not receive
+        // detailed field-level validation errors (OWASP A01:2025).
         services.AddTransient(
             typeof(IPipelineBehavior<,>),
             typeof(TenantAuthorizationBehavior<,>));
 
         services.AddTransient(
             typeof(IPipelineBehavior<,>),
+            typeof(ValidationBehavior<,>));
+
+        services.AddTransient(
+            typeof(IPipelineBehavior<,>),
             typeof(TokenBudgetBehavior<,>));
+
+        services.AddTransient(
+            typeof(IPipelineBehavior<,>),
+            typeof(DailyBudgetBehavior<,>));
 
         services.AddTransient(
             typeof(IPipelineBehavior<,>),

@@ -63,27 +63,53 @@ public static class ToolEndpoints
     {
         var (correlationId, tenantId, userId) = ExtractContext(ctx);
 
+        // Idempotency-Key header — prevents duplicate PendingApproval creation on retry.
+        // Clients should send a stable, client-generated key (e.g. UUID v4) for retryable calls.
+        var idempotencyKey = ctx.Request.Headers.TryGetValue("Idempotency-Key", out var ik)
+            ? ik.ToString()
+            : null;
+
+        // H4 — caller_type JWT claim: distinguishes AI agent invocations from human users.
+        var callerType = ctx.User.FindFirst("caller_type")?.Value switch
+        {
+            "ai_agent"       => ToolEngine.Core.Domain.Enums.CallerType.AiAgent,
+            "system_service" => ToolEngine.Core.Domain.Enums.CallerType.SystemService,
+            _                => ToolEngine.Core.Domain.Enums.CallerType.Human
+        };
+
+        // H5 — ISO 42001 governance metadata: verbatim JSON from X-Governance-Metadata header.
+        var governanceMetadata = ctx.Request.Headers.TryGetValue("X-Governance-Metadata", out var gm)
+            ? gm.ToString()
+            : null;
+
         var command = new ExecuteToolCommand<JsonElement, JsonElement>(
             correlationId, tenantId, userId,
-            ToolName:      name,
-            ToolVersion:   version,
-            Input:         body,
-            ToolType:      ToolType.Logic,
-            ToolNamespace: ns);
+            ToolName:               name,
+            ToolVersion:            version,
+            Input:                  body,
+            ToolType:               ToolType.Logic,
+            ToolNamespace:          ns,
+            IdempotencyKey:         idempotencyKey,
+            CallerType:             callerType,
+            GovernanceMetadataJson: governanceMetadata);
 
         var response = await mediator.Send(command, ct);
 
-        // Approval suspended — return 202 Accepted with poll URL.
+        // Approval suspended — return 202 Accepted.
+        // RFC 7231 §6.3.3: Location header points to the status resource.
+        // Retry-After guides client polling interval (seconds).
         if (response.PendingInvocationId.HasValue)
         {
+            var pollUrl = $"/invocations/{response.PendingInvocationId}/status";
+            ctx.Response.Headers["Retry-After"] = "10";
             return Results.Accepted(
-                $"/invocations/{response.PendingInvocationId}/status",
+                pollUrl,
                 new
                 {
-                    status          = "pending_approval",
-                    invocationId    = response.PendingInvocationId,
-                    pollUrl         = $"/invocations/{response.PendingInvocationId}/status",
-                    message         = response.Error?.Description
+                    status       = "pending_approval",
+                    invocationId = response.PendingInvocationId,
+                    pollUrl,
+                    message      = response.Error?.Description
                 });
         }
 
