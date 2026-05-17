@@ -1,0 +1,54 @@
+# Build results
+bin/
+obj/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# VS Code settings
+.vscode/
+.vs/
+
+# Rider settings
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Test results
+TestResults/
+*.coverage
+*.coveragexml
+*.log
+
+# NuGet packages
+*.nupkg
+packages/
+project.lock.json
+project.fragment.lock.json
+
+# Node Modules
+node_modules
+
+# Others
+*.db
+*.sqlite
+
+# Test Coverage Output
+TestResults/
+coveragereport/
+coverage/
+coverage.info
+coverage.cobertura.xml
+
+# Coverlet output
+coverage.json
+coverage.xml
+lcov.info
+
+# Claude
+.claude/

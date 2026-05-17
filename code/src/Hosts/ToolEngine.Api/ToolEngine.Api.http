@@ -1,0 +1,6 @@
+@ToolEngine.Api_HostAddress = http://localhost:5174
+
+GET {{ToolEngine.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

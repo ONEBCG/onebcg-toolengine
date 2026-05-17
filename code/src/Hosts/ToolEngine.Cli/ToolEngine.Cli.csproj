@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Core\ToolEngine.Core.Domain\ToolEngine.Core.Domain.csproj" />
+    <ProjectReference Include="..\..\Tools\ToolEngine.Tools.Registry\ToolEngine.Tools.Registry.csproj" />
+    <ProjectReference Include="..\..\Tools\ToolEngine.Tools.Samples\ToolEngine.Tools.Samples.csproj" />
+    <ProjectReference Include="..\..\Tools\ToolEngine.Tools.Executor\ToolEngine.Tools.Executor.csproj" />
+    <ProjectReference Include="..\..\Application\ToolEngine.Application\ToolEngine.Application.csproj" />
+    <ProjectReference Include="..\..\Infrastructure\ToolEngine.Infrastructure\ToolEngine.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.*" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.*" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="8.*" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="5.*" />
+    <PackageReference Include="Spectre.Console" Version="0.*" />
+    <PackageReference Include="Spectre.Console.Cli" Version="0.*" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
