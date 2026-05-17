@@ -47,4 +47,21 @@ public sealed record Error(string Code, string Description)
     public static Error SecretExpired(string secretName) =>
         new("SECRET_EXPIRED",
             $"Credential '{secretName}' has expired. Re-invoke the tool.");
+
+    // Returned when a tool is suspended awaiting human approval.
+    // InvocationId is the PendingApproval.Id — poll GET /invocations/{id}/status.
+    public static Error ApprovalPending(Guid invocationId) =>
+        new("APPROVAL_PENDING",
+            $"Tool execution is suspended pending human approval. " +
+            $"Poll GET /invocations/{invocationId}/status for result.");
+
+    public static Error ApprovalExpired(Guid invocationId) =>
+        new("APPROVAL_EXPIRED",
+            $"Approval request {invocationId} expired without a decision.");
+
+    public static Error InvalidOtp() =>
+        new("INVALID_OTP", "The OTP provided is invalid or has expired.");
+
+    public static Error InvalidApprovalToken() =>
+        new("INVALID_APPROVAL_TOKEN", "The approval token is invalid or has already been used.");
 }

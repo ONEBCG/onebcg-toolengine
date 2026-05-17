@@ -7,8 +7,10 @@ using ToolEngine.Core.Abstractions.Common;
 using ToolEngine.Core.Abstractions.Persistence;
 using ToolEngine.Core.Abstractions.Security;
 using ToolEngine.Core.Domain.Entities;
+using ToolEngine.Infrastructure.Approval;
 using ToolEngine.Infrastructure.Common;
 using ToolEngine.Infrastructure.Persistence;
+using ToolEngine.Tools.Abstractions.Interfaces;
 
 public static class ServiceCollectionExtensions
 {
@@ -29,11 +31,15 @@ public static class ServiceCollectionExtensions
                            Repository<Tenant, string>>();
         services.AddScoped<IRepository<ToolInvocationRecord, Guid>,
                            Repository<ToolInvocationRecord, Guid>>();
+        services.AddScoped<IRepository<PendingApproval, Guid>,
+                           Repository<PendingApproval, Guid>>();
 
         services.AddScoped<IReadRepository<Tenant, string>,
                            ReadRepository<Tenant, string>>();
         services.AddScoped<IReadRepository<ToolInvocationRecord, Guid>,
                            ReadRepository<ToolInvocationRecord, Guid>>();
+        services.AddScoped<IReadRepository<PendingApproval, Guid>,
+                           ReadRepository<PendingApproval, Guid>>();
 
         services.AddSingleton<IDateTimeProvider, SystemDateTimeProvider>();
 
@@ -43,6 +49,30 @@ public static class ServiceCollectionExtensions
 
         // Zero Trust secret vault — dev stub. Replace with AzureKeyVaultSecretVault in prod.
         services.AddSingleton<ISecretVault, NullSecretVault>();
+
+        // ── Approval engine ──────────────────────────────────────────────────
+        // Bind ApprovalOptions from config section "Approval".
+        services.AddOptions<ApprovalOptions>()
+                .BindConfiguration("Approval");
+
+        // Email sender — dev stub (logs only). Replace with SendGrid/SES in production.
+        services.AddSingleton<IEmailSender, LoggingEmailSender>();
+
+        // Approval notification channels.
+        services.AddSingleton<IApprovalChannel, DashboardChannel>();
+        services.AddSingleton<IApprovalChannel, EmailMagicLinkChannel>();
+        services.AddSingleton<IApprovalChannel, EmailOtpChannel>();
+        services.AddSingleton<IApprovalChannel, WebhookChannel>();
+
+        // Channel selector — routes by risk tier and tenant overrides.
+        services.AddSingleton<ApprovalChannelSelector>();
+
+        // HTTP client used by WebhookChannel — configure timeout/retry here if needed.
+        services.AddHttpClient("approval-webhook");
+
+        // API approval gate — async, DB-persisted, channel-notified.
+        // CLI overrides this with ConsoleApprovalGate in Cli/Program.cs.
+        services.AddScoped<IHumanApprovalGate, AsyncApprovalGate>();
 
         return services;
     }

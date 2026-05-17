@@ -3,8 +3,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Serilog;
 using ToolEngine.Application.Extensions;
+using ToolEngine.Cli.Guards;
 using ToolEngine.Cli.Repl;
 using ToolEngine.Infrastructure.Extensions;
+using ToolEngine.Tools.Abstractions.Interfaces;
 using ToolEngine.Tools.Executor.Extensions;
 using ToolEngine.Tools.Registry.Extensions;
 using ToolEngine.Tools.Samples.Extensions;
@@ -24,6 +26,10 @@ var host = Host.CreateDefaultBuilder(args)
         services.AddToolApplication();
         services.AddToolInfrastructure(
             opt => opt.UseSqlite("Data Source=toolengine-cli.db"));
+
+        // CLI uses synchronous console prompts instead of async email/webhook channels.
+        services.AddTransient<IHumanApprovalGate, ConsoleApprovalGate>();
+
         services.AddTransient<ReplLoop>();
     })
     .Build();

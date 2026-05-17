@@ -11,12 +11,15 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore"                         Version="8.*" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.*" />
+    <PackageReference Include="Microsoft.Extensions.Http"                             Version="8.*" />
+    <PackageReference Include="Microsoft.Extensions.Options"                          Version="8.*" />
     <PackageReference Include="Microsoft.AspNetCore.Http"                             Version="2.*" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\Core\ToolEngine.Core.Abstractions\ToolEngine.Core.Abstractions.csproj" />
     <ProjectReference Include="..\..\Core\ToolEngine.Core.Domain\ToolEngine.Core.Domain.csproj" />
+    <ProjectReference Include="..\..\Tools\ToolEngine.Tools.Abstractions\ToolEngine.Tools.Abstractions.csproj" />
   </ItemGroup>
 
 </Project>

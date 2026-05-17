@@ -1,6 +1,7 @@
 namespace ToolEngine.Tools.Abstractions.Interfaces;
 
 using ToolEngine.Core.Domain.Common;
+using ToolEngine.Core.Domain.Enums;
 
 /// <summary>
 /// Two-mode tool discovery:
@@ -29,15 +30,22 @@ public interface IToolDiscovery
     IReadOnlyList<string>                  GetVersions(string ns, string name, string? tenantId = null);
 }
 
-/// <summary>Lightweight descriptor returned by IToolDiscovery — no handler type reference.</summary>
+/// <summary>
+/// Lightweight descriptor returned by IToolDiscovery — no handler type reference.
+/// Approval metadata is surfaced here so ApprovalBehavior (Application layer)
+/// can check [RequiresApproval] without depending on IToolRegistry or reflection.
+/// </summary>
 public sealed record ToolDiscoveryDescriptor(
-    string   Namespace,
-    string   Name,
-    string   Version,
-    string   Description,
-    string   WhenToUse,
-    string   WhenNotToUse,
-    string?  TenantId = null)
+    string       Namespace,
+    string       Name,
+    string       Version,
+    string       Description,
+    string       WhenToUse,
+    string       WhenNotToUse,
+    string?      TenantId              = null,
+    bool         NeedsApproval         = false,
+    ApprovalRisk ApprovalRisk          = ApprovalRisk.High,
+    string?      ApprovalReason        = null)
 {
     public string FullName => $"{Namespace}.{Name}";
 }

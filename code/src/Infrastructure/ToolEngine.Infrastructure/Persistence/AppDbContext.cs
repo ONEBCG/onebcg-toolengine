@@ -9,6 +9,7 @@ public class AppDbContext : DbContext
 
     public DbSet<Tenant>               Tenants               => Set<Tenant>();
     public DbSet<ToolInvocationRecord> ToolInvocationRecords => Set<ToolInvocationRecord>();
+    public DbSet<PendingApproval>      PendingApprovals      => Set<PendingApproval>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {

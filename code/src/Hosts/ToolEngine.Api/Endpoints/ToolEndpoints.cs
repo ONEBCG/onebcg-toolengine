@@ -73,6 +73,20 @@ public static class ToolEndpoints
 
         var response = await mediator.Send(command, ct);
 
+        // Approval suspended — return 202 Accepted with poll URL.
+        if (response.PendingInvocationId.HasValue)
+        {
+            return Results.Accepted(
+                $"/invocations/{response.PendingInvocationId}/status",
+                new
+                {
+                    status          = "pending_approval",
+                    invocationId    = response.PendingInvocationId,
+                    pollUrl         = $"/invocations/{response.PendingInvocationId}/status",
+                    message         = response.Error?.Description
+                });
+        }
+
         return response.Success
             ? Results.Ok(response)
             : Results.Problem(

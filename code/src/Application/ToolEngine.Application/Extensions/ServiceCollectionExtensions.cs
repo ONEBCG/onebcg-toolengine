@@ -14,7 +14,15 @@ public static class ServiceCollectionExtensions
     /// <summary>
     /// Registers MediatR, pipeline behaviors, and validators from this assembly.
     /// Call after AddToolRegistry() and AddToolExecutor() in the composition root.
-    /// Behavior order: ValidationBehavior (outer) → AuditBehavior (inner) → Handler.
+    ///
+    /// Behavior execution order (outermost → innermost → handler):
+    ///   ValidationBehavior
+    ///   → TenantAuthorizationBehavior
+    ///   → TokenBudgetBehavior
+    ///   → LoopDetectionBehavior
+    ///   → ApprovalBehavior
+    ///   → AuditBehavior
+    ///   → Handler
     /// </summary>
     public static IServiceCollection AddToolApplication(
         this IServiceCollection services)
@@ -25,14 +33,35 @@ public static class ServiceCollectionExtensions
 
         services.AddValidatorsFromAssembly(assembly, includeInternalTypes: true);
 
-        // Outermost first
+        // Pipeline — register outermost first.
         services.AddTransient(
             typeof(IPipelineBehavior<,>),
             typeof(ValidationBehavior<,>));
 
         services.AddTransient(
             typeof(IPipelineBehavior<,>),
+            typeof(TenantAuthorizationBehavior<,>));
+
+        services.AddTransient(
+            typeof(IPipelineBehavior<,>),
+            typeof(TokenBudgetBehavior<,>));
+
+        services.AddTransient(
+            typeof(IPipelineBehavior<,>),
+            typeof(LoopDetectionBehavior<,>));
+
+        services.AddTransient(
+            typeof(IPipelineBehavior<,>),
+            typeof(ApprovalBehavior<,>));
+
+        services.AddTransient(
+            typeof(IPipelineBehavior<,>),
             typeof(AuditBehavior<,>));
+
+        // Default options for loop detection — override from config section "LoopDetection".
+        services.AddOptions<LoopDetectionOptions>()
+                .Configure(o => o.MaxCallsPerCorrelation = 10)
+                .BindConfiguration("LoopDetection");
 
         // MediatR does not auto-register open generic handlers via assembly scan.
         // Register the JsonElement boundary type explicitly — used by all host entry points.

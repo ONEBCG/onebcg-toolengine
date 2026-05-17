@@ -18,6 +18,7 @@ public sealed record ExecuteToolCommand<TInput, TOutput>(
     string        ToolVersion,
     TInput        Input,
     ToolType      ToolType,
-    ExecutionMode Mode          = ExecutionMode.Sequential,
-    string        ToolNamespace = "")
+    ExecutionMode Mode               = ExecutionMode.Sequential,
+    string        ToolNamespace      = "",
+    int           MaxResponseTokens  = 25_000)
     : IRequest<ToolResponse<TOutput>>, IExecuteToolCommand;

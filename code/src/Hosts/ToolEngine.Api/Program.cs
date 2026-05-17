@@ -104,6 +104,8 @@ try
 
     // ── Endpoints ────────────────────────────────────────────────────────────
     app.MapToolEndpoints();
+    app.MapApprovalEndpoints();
+    app.MapInvocationEndpoints();
     app.MapHealthEndpoints();
     app.MapDevEndpoints();
 

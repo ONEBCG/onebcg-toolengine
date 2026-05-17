@@ -13,9 +13,11 @@ public sealed record ToolResponse<TOutput>(
     ToolUsageMetrics Metrics,
     DateTimeOffset   Timestamp,
     // True when the response was truncated to fit MaxResponseTokens.
-    bool             IsTruncated   = false,
+    bool             IsTruncated         = false,
     // Opaque token the agent passes in the next request to get the next page.
-    string?          NextPageToken = null) : IToolResponse
+    string?          NextPageToken       = null,
+    // Set when execution is suspended awaiting approval. Poll GET /invocations/{id}/status.
+    Guid?            PendingInvocationId = null) : IToolResponse
 {
     public static ToolResponse<TOutput> Ok(
         Guid correlationId,
@@ -42,4 +44,21 @@ public sealed record ToolResponse<TOutput>(
             error,
             metrics ?? ToolUsageMetrics.Empty,
             DateTimeOffset.UtcNow);
+
+    // Returns a suspended response when execution is pending human approval.
+    // The caller should map this to HTTP 202 and surface the poll URL.
+    public static ToolResponse<TOutput> Suspended(
+        Guid correlationId,
+        Guid pendingInvocationId) =>
+        new(correlationId,
+            false,
+            default,
+            new ToolError(
+                "APPROVAL_PENDING",
+                $"Tool execution is suspended pending human approval. " +
+                $"Poll GET /invocations/{pendingInvocationId}/status for result.",
+                202),
+            ToolUsageMetrics.Empty,
+            DateTimeOffset.UtcNow,
+            PendingInvocationId: pendingInvocationId);
 }

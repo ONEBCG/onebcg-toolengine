@@ -1,6 +1,8 @@
 namespace ToolEngine.Tools.Registry;
 
+using ToolEngine.Core.Domain.Attributes;
 using ToolEngine.Core.Domain.Common;
+using ToolEngine.Core.Domain.Enums;
 using ToolEngine.Tools.Abstractions.Interfaces;
 
 /// <summary>
@@ -9,10 +11,11 @@ using ToolEngine.Tools.Abstractions.Interfaces;
 /// Two modes:
 ///   1. Exact resolve — O(1) lookup by namespace + name + version via registry key.
 ///   2. Semantic search — text-based stub: scores Description + WhenToUse against
-///      the caller's intent using word-overlap. Embeddings deferred to Phase D.
+///      the caller's intent using word-overlap. Embeddings deferred to a future phase.
 ///
-/// Per Anthropic/OpenAI guidance: registries with 50+ tools should expose discovery
-/// so agents can route by intent rather than exact name matching.
+/// Approval metadata is surfaced in ToolDiscoveryDescriptor by reflecting on the
+/// handler's [RequiresApproval] attribute — so ApprovalBehavior never needs to
+/// reference IToolRegistry or perform reflection itself.
 /// </summary>
 public sealed class ToolDiscovery : IToolDiscovery
 {
@@ -71,25 +74,33 @@ public sealed class ToolDiscovery : IToolDiscovery
 
     // --- Helpers ---
 
-    private static ToolDiscoveryDescriptor ToDescriptor(ToolDescriptor d) =>
-        new(d.Metadata.Namespace,
+    private static ToolDiscoveryDescriptor ToDescriptor(ToolDescriptor d)
+    {
+        // Reflect on the handler type to surface [RequiresApproval] metadata.
+        var attr = d.HandlerType
+            .GetCustomAttributes(typeof(RequiresApprovalAttribute), inherit: false)
+            .FirstOrDefault() as RequiresApprovalAttribute;
+
+        return new(
+            d.Metadata.Namespace,
             d.Metadata.Name,
             d.Metadata.Version,
             d.Metadata.Description,
             d.Metadata.InputSchema.WhenToUse,
             d.Metadata.InputSchema.WhenNotToUse,
-            d.TenantId);
+            d.TenantId,
+            NeedsApproval:  attr is not null,
+            ApprovalRisk:   attr?.Risk   ?? ApprovalRisk.High,
+            ApprovalReason: attr?.Reason);
+    }
 
-    // Word-overlap scoring: count how many intent words appear in the tool's
-    // Description + WhenToUse text. Simple and deterministic — no external deps.
     private static double Score(ToolDescriptor d, HashSet<string> intentWords)
     {
         var corpus = Tokenize(
             $"{d.Metadata.Description} {d.Metadata.InputSchema.WhenToUse}");
 
-        // Weighted: exact FullName / Name match gets a bonus.
-        double bonus = intentWords.Contains(d.Metadata.Name.ToLowerInvariant())  ? 2.0
-                     : intentWords.Contains(d.FullName.ToLowerInvariant())        ? 3.0
+        double bonus = intentWords.Contains(d.Metadata.Name.ToLowerInvariant()) ? 2.0
+                     : intentWords.Contains(d.FullName.ToLowerInvariant())       ? 3.0
                      : 0.0;
 
         return corpus.Intersect(intentWords).Count() + bonus;
