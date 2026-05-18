@@ -43,16 +43,26 @@ public sealed class AnthropicLlmProvider : ILlmProvider
             return new { name = t.SanitizedName, description = t.Description, input_schema = schema };
         }).ToArray();
 
-        // Build messages — Anthropic does not support role:system in messages; system goes as top-level field
+        // Build messages — Anthropic does not support role:system in messages array;
+        // system content must go as the top-level "system" field.
+        // Extract the injected system message (AgentScopeEnforcer) from the session so the
+        // tool-scope rules, grounding constraints, and available-tool list all reach the model.
+        // Previously this was hardcoded to a generic string which silently discarded the
+        // AgentScopeEnforcer prompt — tools and scope rules were never sent.
+        var systemContent  = ExtractSystemContent(messages);
         var anthropicMessages = BuildAnthropicMessages(messages);
+
+        // Clamp temperature to Anthropic's valid range (0.0–1.0).
+        var temperature = Math.Clamp(options.Temperature, 0.0, 1.0);
 
         var requestBody = new
         {
-            model      = options.Model,
-            max_tokens = options.MaxTokens,
-            system     = "You are a helpful assistant with access to tools. Use tools when appropriate to fulfill the user's request accurately.",
-            messages   = anthropicMessages,
-            tools      = toolsArray
+            model       = options.Model,
+            max_tokens  = options.MaxTokens,
+            temperature,
+            system      = systemContent,
+            messages    = anthropicMessages,
+            tools       = toolsArray
         };
 
         var http    = _httpFactory.CreateClient("anthropic");
@@ -124,12 +134,31 @@ public sealed class AnthropicLlmProvider : ILlmProvider
         }
     }
 
+    /// <summary>
+    /// Extracts and concatenates all system-role messages into a single string for
+    /// use as the Anthropic top-level <c>system</c> field.
+    /// Returns a minimal fallback when no system message is present (e.g. test stubs).
+    /// </summary>
+    private static string ExtractSystemContent(IReadOnlyList<LlmMessage> messages)
+    {
+        var parts = messages
+            .Where(m => m.Role == MessageRole.System && !string.IsNullOrWhiteSpace(m.Content))
+            .Select(m => m.Content!.Trim())
+            .ToList();
+
+        return parts.Count > 0
+            ? string.Join("\n\n", parts)
+            : "You are a helpful assistant with access to tools. Use tools when appropriate.";
+    }
+
     private static List<object> BuildAnthropicMessages(IReadOnlyList<LlmMessage> messages)
     {
         var result = new List<object>();
         foreach (var m in messages)
         {
-            if (m.Role == MessageRole.System) continue; // handled as top-level system field
+            // System messages are handled as the top-level "system" field via ExtractSystemContent.
+            // Anthropic's messages array must not contain role:system entries.
+            if (m.Role == MessageRole.System) continue;
 
             if (m.Role == MessageRole.Tool && m.ToolCallId is not null)
             {

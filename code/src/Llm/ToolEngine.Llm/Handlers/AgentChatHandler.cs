@@ -29,6 +29,7 @@ public sealed class AgentChatHandler : IRequestHandler<AgentChatCommand, AgentCh
             result.SessionId,
             result.Usage,
             result.ErrorMessage,
-            result.PendingInvocationId);
+            result.PendingInvocationId,
+            result.IsOutOfScope);
     }
 }

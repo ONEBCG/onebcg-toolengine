@@ -20,23 +20,35 @@ public sealed class WeatherReportTool
     public override string Name        => "report";
     public override string Version     => "v1";
     public override string Description =>
-        "Fetches current weather and converts temperature to the requested unit.";
+        "Fetches current weather for a city, converts the temperature to the requested unit " +
+        "(Celsius or Fahrenheit), and returns a ready-to-display summary string. " +
+        "Preferred over weather.current when the user wants Fahrenheit or a formatted summary.";
 
     public override ToolSchema InputSchema => ToolSchema.For<WeatherReportInput>(
-        description:   "City name and desired output temperature unit.",
-        whenToUse:     "Call when the user wants a weather summary with temperature in a " +
-                       "specific unit (especially Fahrenheit, since weather.current returns Celsius).",
-        whenNotToUse:  "Do not call if the user only needs Celsius — use weather.current directly. " +
-                       "Do not call for multiple cities — call once per city.",
+        description:   "The city to report on and the desired temperature unit for the output.",
+        whenToUse:     "Use when the user asks for weather in Fahrenheit, or when a pre-formatted " +
+                       "summary sentence is needed. Handles phrasing like 'weather in X in Fahrenheit', " +
+                       "'give me a weather summary for X', 'what's it like in X in °F'. " +
+                       "Internally calls weather.current then converts temperature via math.calculate.",
+        whenNotToUse:  "Do not use when the user only needs the Celsius reading — " +
+                       "weather.current is more direct. Do not call for multiple cities in one request; " +
+                       "call this tool once per city.",
         examples:
         [
-            new("Weather in London in Fahrenheit",
+            new("Full weather report for London in Fahrenheit",
                 new WeatherReportInput("London", "fahrenheit"),
                 new WeatherReportOutput("London", 59.4, "fahrenheit",
-                    "Partly cloudy", 72, 18.5, "London: 59.4°F, Partly cloudy, 72% humidity."))
+                    "Partly cloudy", 72, 18.5, "London: 59.4°F, Partly cloudy, 72% humidity.")),
+            new("Weather summary for Tokyo in Celsius",
+                new WeatherReportInput("Tokyo", "celsius"),
+                new WeatherReportOutput("Tokyo", 25.0, "celsius",
+                    "Clear sky", 55, 12.0, "Tokyo: 25.0°C, Clear sky, 55% humidity."))
         ],
-        new ToolParameter("city",            "string", "City name"),
-        new ToolParameter("temperatureUnit", "string", "celsius or fahrenheit",
+        new ToolParameter("city", "string",
+                          "Specific city name. Examples: 'London', 'New York', 'Paris', 'Tokyo'. " +
+                          "Must be a city, not a region or country."),
+        new ToolParameter("temperatureUnit", "string",
+                          "Temperature unit for the output: celsius or fahrenheit. Defaults to fahrenheit.",
                           Required: false, Default: "fahrenheit", Nullable: true,
                           Enum: ["celsius", "fahrenheit"]));
 

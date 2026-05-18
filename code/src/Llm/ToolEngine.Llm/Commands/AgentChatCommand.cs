@@ -20,4 +20,11 @@ public sealed record AgentChatResponse(
     string                            SessionId,
     LlmUsage                          Usage,
     string?                           ErrorMessage        = null,
-    Guid?                             PendingInvocationId = null);
+    Guid?                             PendingInvocationId = null,
+    /// <summary>
+    /// <c>true</c> when the request was outside the scope of available tools.
+    /// <see cref="Reply"/> contains the human-readable refusal.
+    /// This is a conversational boundary, not a system error — callers should
+    /// display <see cref="Reply"/> to the user and not treat this as a failure.
+    /// </summary>
+    bool                              IsOutOfScope        = false);

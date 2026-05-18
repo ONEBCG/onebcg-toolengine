@@ -42,10 +42,14 @@ public class OpenAiLlmProvider : ILlmProvider
 
         var oaiMessages = BuildOpenAiMessages(messages);
 
+        // OpenAI accepts temperature 0.0–2.0.
+        var temperature = Math.Max(0.0, Math.Min(options.Temperature, 2.0));
+
         var requestBody = new
         {
             model       = options.Model,
             max_tokens  = options.MaxTokens,
+            temperature,
             messages    = oaiMessages,
             tools       = toolsArray,
             tool_choice = "auto"

@@ -8,16 +8,42 @@ using ToolEngine.Application.Commands;
 using ToolEngine.Core.Domain.Enums;
 using ToolEngine.Llm.Abstractions;
 using ToolEngine.Llm.Conversion;
+using ToolEngine.Llm.Guards;
 using ToolEngine.Llm.Models;
 using ToolEngine.Llm.Options;
 using ToolEngine.Tools.Registry;
 
 public sealed class AgentOrchestrator
 {
+    /// <summary>
+    /// Injected into the session as a User message immediately after each tool result,
+    /// before the LLM's summary turn. Forces the model to derive its response exclusively
+    /// from the tool output — the industry-standard "grounding constraint injection" pattern.
+    ///
+    /// <para>
+    /// This is defence in depth on top of the system prompt Rule 2. System prompt rules are
+    /// advisory; a per-turn injection is harder for the model to override because it appears
+    /// in the live conversation context immediately before the generation step.
+    /// </para>
+    /// </summary>
+    private const string GroundingReminder =
+        "Based ONLY on the tool result above, provide a concise answer to the original request. " +
+        "Do not include any information that is not present in the tool result.";
+
+    /// <summary>
+    /// Response length ratio threshold above which a grounding warning is logged.
+    /// If the LLM reply is more than 5× the character length of the tool result,
+    /// it likely contains supplemental general knowledge beyond the tool's output.
+    /// </summary>
+    private const int GroundingLengthRatioWarningThreshold = 5;
+
     private readonly IAgentSessionStore         _sessionStore;
     private readonly IProviderRouter            _router;
     private readonly IToolRegistry              _registry;
     private readonly ToolSchemaConverter        _converter;
+    private readonly ToolGuardFilter            _guardFilter;
+    private readonly AgentScopeEnforcer         _scopeEnforcer;
+    private readonly AgentScopeClassifier       _scopeClassifier;
     private readonly IMediator                  _mediator;
     private readonly BudgetOptions              _budget;
     private readonly ILogger<AgentOrchestrator> _logger;
@@ -27,17 +53,23 @@ public sealed class AgentOrchestrator
         IProviderRouter             router,
         IToolRegistry               registry,
         ToolSchemaConverter         converter,
+        ToolGuardFilter             guardFilter,
+        AgentScopeEnforcer          scopeEnforcer,
+        AgentScopeClassifier        scopeClassifier,
         IMediator                   mediator,
         IOptions<LlmOptions>        options,
         ILogger<AgentOrchestrator>  logger)
     {
-        _sessionStore = sessionStore;
-        _router       = router;
-        _registry     = registry;
-        _converter    = converter;
-        _mediator     = mediator;
-        _budget       = options.Value.Budget;
-        _logger       = logger;
+        _sessionStore    = sessionStore;
+        _router          = router;
+        _registry        = registry;
+        _converter       = converter;
+        _guardFilter     = guardFilter;
+        _scopeEnforcer   = scopeEnforcer;
+        _scopeClassifier = scopeClassifier;
+        _mediator        = mediator;
+        _budget          = options.Value.Budget;
+        _logger          = logger;
     }
 
     public async Task<AgentResult> RunAsync(
@@ -57,8 +89,11 @@ public sealed class AgentOrchestrator
         using var sessionLock  = await _sessionStore.AcquireSessionLockAsync(effectiveSessionId, ct);
         var session            = await _sessionStore.GetOrCreateAsync(sessionId, isSingleTurn, ct);
 
-        // Tenant-scoped tool list — LLM only sees tools this tenant is allowed to use
-        var descriptors = _registry.ListAll(tenantId);
+        // Tenant-scoped tool list — LLM only sees tools this tenant is allowed to use.
+        // ToolGuardFilter (pre-LLM enforcement point 1/2): strips any tools not permitted
+        // by the ToolGuard allowlist/denylist before the schema is sent to the provider.
+        // The model never sees, and therefore cannot select, tools blocked at this point.
+        var descriptors = _guardFilter.Filter(_registry.ListAll(tenantId));
         var toolDefs    = _converter.Convert(descriptors);
 
         var (provider, provOpts) = _router.Select(tenantProviderOverride);
@@ -66,7 +101,60 @@ public sealed class AgentOrchestrator
         // Build a lookup for desanitizing tool names back to originals
         var toolLookup = toolDefs.ToDictionary(t => t.SanitizedName, t => t.OriginalFullName);
 
-        session.AddMessage(LlmMessage.User(text));
+        // ── Pre-flight scope classification ───────────────────────────────────────
+        // AgentScopeClassifier makes a dedicated lightweight LLM call BEFORE the
+        // main loop. It returns structured JSON indicating which parts of the request
+        // are tool-addressable and which are not. This is the primary enforcement
+        // layer — more reliable than system-prompt-only approaches which capable LLMs
+        // override with their training instinct to be helpful.
+        //
+        // Outcomes:
+        //   Fully out of scope  → return AgentResult.OutOfScope immediately (no loop entered)
+        //   Mixed               → only inScopePortion forwarded; outOfScopeParts noted
+        //   Fully in scope      → original text forwarded unchanged
+        //   Classification fail → fail-open (request passes through; system prompt still applies)
+        var scopeCheck = await _scopeClassifier.ClassifyAsync(
+            text, descriptors, provider, provOpts, ct);
+
+        // Record classification tokens immediately — they represent real API cost and must
+        // be included in the session total before the budget gate runs.
+        // Without this, the budget check only sees main-loop tokens and under-reports cost;
+        // sessions appear to have more headroom than they actually do.
+        session.RecordUsage(scopeCheck.Usage);
+
+        if (scopeCheck.IsFullyOutOfScope)
+        {
+            var refusal = scopeCheck.RefusalMessage
+                ?? "This request is outside the scope of the available tools.";
+            _logger.LogInformation(
+                "Pre-flight classifier rejected request for session {SessionId} as fully out of scope. " +
+                "Classification used {Tokens} tokens.",
+                effectiveSessionId, scopeCheck.Usage.TotalTokens);
+            return AgentResult.OutOfScope(refusal, effectiveSessionId, session.TotalUsage);
+        }
+
+        // Use only the in-scope portion for the main loop
+        var effectiveText    = scopeCheck.InScopePortion ?? text;
+        var outOfScopeParts  = scopeCheck.OutOfScopeParts;
+
+        if (outOfScopeParts.Length > 0)
+            _logger.LogInformation(
+                "Pre-flight classifier trimmed {Count} out-of-scope portion(s) from request: [{Parts}]",
+                outOfScopeParts.Length, string.Join(", ", outOfScopeParts));
+
+        // ── System prompt injection ───────────────────────────────────────────────
+        // Inject response-quality rules (missing params + response grounding) once
+        // per session. Multi-turn sessions carry the prompt forward automatically.
+        if (!session.Messages.Any(m => m.Role == MessageRole.System))
+        {
+            var systemPrompt = _scopeEnforcer.BuildSystemPrompt(descriptors);
+            session.AddMessage(LlmMessage.System(systemPrompt));
+            _logger.LogDebug(
+                "System prompt injected for session {SessionId} ({ToolCount} tools).",
+                effectiveSessionId, descriptors.Count);
+        }
+
+        session.AddMessage(LlmMessage.User(effectiveText));
 
         string?       lastToolInvoked = null;
         JsonElement?  lastToolResult  = null;
@@ -96,10 +184,49 @@ public sealed class AgentOrchestrator
 
             if (response.StopReason == StopReason.EndTurn)
             {
-                session.AddMessage(LlmMessage.Assistant(response.Content ?? string.Empty));
+                var content = response.Content ?? string.Empty;
+
+                // If the pre-flight classifier trimmed out-of-scope parts from the
+                // original request, append a note so the user knows what was discarded.
+                if (outOfScopeParts.Length > 0)
+                {
+                    var note = outOfScopeParts.Length == 1
+                        ? $"\n\nNote: \"{outOfScopeParts[0]}\" is outside the scope of what I can help with and was not processed."
+                        : $"\n\nNote: The following parts of your request are outside the scope of what I can help with and were not processed: {string.Join("; ", outOfScopeParts.Select(p => $"\"{p}\""))}.";
+                    content += note;
+                }
+
+                session.AddMessage(LlmMessage.Assistant(content));
+
+                // ── Response grounding observability ──────────────────────────
+                // When a tool was invoked, the reply should be predominantly derived
+                // from the tool result. If the reply is disproportionately longer than
+                // the tool output, the LLM may have supplemented with general knowledge.
+                // Log a warning so operators can tune the grounding reminder or audit.
+                if (lastToolInvoked is not null)
+                {
+                    var lastToolMsg = session.Messages.LastOrDefault(
+                        m => m.Role == MessageRole.Tool);
+                    if (lastToolMsg?.Content is not null)
+                    {
+                        var toolLen  = lastToolMsg.Content.Length;
+                        var replyLen = content.Length;
+                        if (toolLen > 0 && replyLen > toolLen * GroundingLengthRatioWarningThreshold)
+                            _logger.LogWarning(
+                                "Grounding concern on session {SessionId}: reply ({ReplyLen} chars) " +
+                                "is {Ratio}x the tool result ({ToolLen} chars) for '{Tool}'. " +
+                                "Review for potential knowledge leakage beyond tool output.",
+                                session.SessionId,
+                                replyLen,
+                                replyLen / toolLen,
+                                toolLen,
+                                lastToolInvoked);
+                    }
+                }
+
                 if (!isSingleTurn) await _sessionStore.SaveAsync(session, ct);
                 return AgentResult.Ok(
-                    response.Content ?? string.Empty,
+                    content,
                     session.SessionId,
                     session.TotalUsage,
                     lastToolInvoked,
@@ -124,6 +251,26 @@ public sealed class AgentOrchestrator
                 _logger.LogInformation(
                     "LLM selected tool {Tool} for session {SessionId}",
                     originalName, session.SessionId);
+
+                // ToolGuardFilter (post-selection enforcement point 2/2): re-validates the
+                // tool name returned by the LLM before executing it through MediatR.
+                // Defence in depth against prompt-injection attacks where a malicious user
+                // prompt tricks the model into "calling" a tool it was not shown in the schema.
+                if (!_guardFilter.IsPermitted(originalName))
+                {
+                    _logger.LogWarning(
+                        "ToolGuard blocked post-selection tool '{Tool}' for session {SessionId}. " +
+                        "Possible prompt injection attempt.",
+                        originalName, session.SessionId);
+
+                    var errorResult = JsonSerializer.Serialize(new
+                    {
+                        error       = "TOOL_GUARD_BLOCKED",
+                        description = $"Tool '{originalName}' is not permitted by the current guard configuration."
+                    });
+                    session.AddMessage(LlmMessage.ToolResult(toolCallId, errorResult));
+                    continue;
+                }
 
                 // Build governance metadata — recorded on ToolInvocationRecord
                 var governance = JsonSerializer.Serialize(new
@@ -173,7 +320,14 @@ public sealed class AgentOrchestrator
                     : default(JsonElement?);
 
                 session.AddMessage(LlmMessage.ToolResult(toolCallId, resultJson));
-                // Continue the loop — LLM will summarize the tool result
+
+                // Grounding constraint injection — injected as a User message immediately
+                // after the tool result, before the LLM's summary generation step.
+                // The model sees this in its live context window and is far less likely
+                // to override it than a system prompt rule written at session start.
+                // Industry reference: RAG grounding / faithfulness enforcement pattern.
+                session.AddMessage(LlmMessage.User(GroundingReminder));
+                // Continue the loop — LLM will produce a grounded summary
             }
         }
 

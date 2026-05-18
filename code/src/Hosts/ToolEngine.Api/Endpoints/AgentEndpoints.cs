@@ -28,17 +28,42 @@ public static class AgentEndpoints
         return app;
     }
 
+    // Maximum characters accepted in a single agent request.
+    // Limits prompt-injection surface and prevents runaway token consumption.
+    private const int MaxTextLength = 4_000;
+
+    // Provider names that may appear in X-Llm-Provider.
+    // Only alphanumeric + hyphens accepted; unrecognised values rejected before routing.
+    private static readonly System.Text.RegularExpressions.Regex _providerNameRx =
+        new(@"^[a-zA-Z0-9\-]{1,50}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
     private static async Task<IResult> AgentChat(
         [FromBody] AgentChatRequest body,
         HttpContext                 ctx,
         IMediator                  mediator,
         CancellationToken          ct)
     {
-        var (correlationId, tenantId, userId) = ExtractContext(ctx);
+        // ── Input validation ──────────────────────────────────────────────────
+        if (string.IsNullOrWhiteSpace(body.Text))
+            return Results.BadRequest(new { error = "Text must not be empty." });
 
-        // Optional provider override from header
+        if (body.Text.Length > MaxTextLength)
+            return Results.BadRequest(new
+            {
+                error = $"Text exceeds maximum length of {MaxTextLength} characters."
+            });
+
+        // ── Provider override header — sanitise before routing ────────────────
         var providerOverride = ctx.Request.Headers.TryGetValue("X-Llm-Provider", out var hdr)
             ? hdr.ToString() : null;
+
+        if (providerOverride is not null && !_providerNameRx.IsMatch(providerOverride))
+            return Results.BadRequest(new
+            {
+                error = "X-Llm-Provider contains invalid characters. Use alphanumeric and hyphens only."
+            });
+
+        var (correlationId, tenantId, userId) = ExtractContext(ctx);
 
         var command = new AgentChatCommand(
             correlationId,
@@ -50,6 +75,7 @@ public static class AgentEndpoints
 
         var response = await mediator.Send(command, ct);
 
+        // ── Pending approval (202) ────────────────────────────────────────────
         if (response.PendingInvocationId.HasValue)
         {
             var pollUrl = $"/invocations/{response.PendingInvocationId}/status";
@@ -63,11 +89,24 @@ public static class AgentEndpoints
             });
         }
 
+        // ── Out-of-scope (200 — conversational boundary, not a system error) ──
+        // IsOutOfScope = true means the pre-flight classifier determined the request
+        // was outside the domain of available tools. Reply contains the refusal message.
+        // Return 200 so clients can display it as a normal assistant turn, not an error.
+        if (response.IsOutOfScope)
+            return Results.Ok(new
+            {
+                reply        = response.Reply,
+                isOutOfScope = true,
+                sessionId    = response.SessionId,
+                usage        = BuildUsage(response)
+            });
+
+        // ── System errors (429 / 500) ─────────────────────────────────────────
         if (!response.Success)
         {
-            // Distinguish budget (429) from other errors (500)
-            var statusCode = response.ErrorMessage?.Contains("budget") == true ||
-                             response.ErrorMessage?.Contains("iterations") == true
+            var statusCode = response.ErrorMessage?.Contains("budget",    StringComparison.OrdinalIgnoreCase) == true ||
+                             response.ErrorMessage?.Contains("iterations", StringComparison.OrdinalIgnoreCase) == true
                              ? 429 : 500;
             return Results.Problem(
                 detail:     response.ErrorMessage,
@@ -75,21 +114,25 @@ public static class AgentEndpoints
                 title:      "AgentError");
         }
 
+        // ── Success (200) ─────────────────────────────────────────────────────
         return Results.Ok(new
         {
-            reply       = response.Reply,
-            toolInvoked = response.ToolInvoked,
-            toolResult  = response.ToolResult,
-            sessionId   = response.SessionId,
-            usage       = new
-            {
-                inputTokens      = response.Usage.InputTokens,
-                outputTokens     = response.Usage.OutputTokens,
-                totalTokens      = response.Usage.TotalTokens,
-                estimatedCostUsd = response.Usage.EstimatedCostUsd
-            }
+            reply        = response.Reply,
+            isOutOfScope = false,
+            toolInvoked  = response.ToolInvoked,
+            toolResult   = response.ToolResult,
+            sessionId    = response.SessionId,
+            usage        = BuildUsage(response)
         });
     }
+
+    private static object BuildUsage(AgentChatResponse r) => new
+    {
+        inputTokens      = r.Usage.InputTokens,
+        outputTokens     = r.Usage.OutputTokens,
+        totalTokens      = r.Usage.TotalTokens,
+        estimatedCostUsd = r.Usage.EstimatedCostUsd
+    };
 
     private static async Task AgentChatStream(
         [FromBody] AgentChatRequest body,
@@ -97,22 +140,44 @@ public static class AgentEndpoints
         IMediator                  mediator,
         CancellationToken          ct)
     {
+        // ── Input validation (same rules as /chat) ────────────────────────────
+        if (string.IsNullOrWhiteSpace(body.Text))
+        {
+            ctx.Response.StatusCode = 400;
+            return;
+        }
+
+        if (body.Text.Length > MaxTextLength)
+        {
+            ctx.Response.StatusCode = 400;
+            return;
+        }
+
+        var providerOverride = ctx.Request.Headers.TryGetValue("X-Llm-Provider", out var hdr)
+            ? hdr.ToString() : null;
+
+        if (providerOverride is not null && !_providerNameRx.IsMatch(providerOverride))
+        {
+            ctx.Response.StatusCode = 400;
+            return;
+        }
+
+        // ── SSE headers ───────────────────────────────────────────────────────
         ctx.Response.ContentType          = "text/event-stream";
         ctx.Response.Headers.CacheControl = "no-cache";
         ctx.Response.Headers.Connection   = "keep-alive";
 
         var (correlationId, tenantId, userId) = ExtractContext(ctx);
-        var providerOverride = ctx.Request.Headers.TryGetValue("X-Llm-Provider", out var hdr)
-            ? hdr.ToString() : null;
 
         var command = new AgentChatCommand(
             correlationId, tenantId, userId, body.Text, body.SessionId, providerOverride);
 
-        // Run orchestration and emit SSE events
-        await SseWriter.WriteEventAsync(ctx.Response, "status", "{ \"status\": \"processing\" }", ct);
+        await SseWriter.WriteEventAsync(ctx.Response, "status",
+            JsonSerializer.Serialize(new { status = "processing" }), ct);
 
         var response = await mediator.Send(command, ct);
 
+        // Emit tool events regardless of final outcome — client may display progress
         if (response.ToolInvoked is not null)
             await SseWriter.WriteEventAsync(ctx.Response, "tool_selected",
                 JsonSerializer.Serialize(new { tool = response.ToolInvoked }), ct);
@@ -121,12 +186,45 @@ public static class AgentEndpoints
             await SseWriter.WriteEventAsync(ctx.Response, "tool_result",
                 JsonSerializer.Serialize(response.ToolResult.Value), ct);
 
-        if (response.Success)
+        // ── Terminal events — exactly one of the four below fires ─────────────
+
+        if (response.IsOutOfScope)
+        {
+            // Scope boundary — not an error; client should display as assistant message
+            await SseWriter.WriteEventAsync(ctx.Response, "out_of_scope",
+                JsonSerializer.Serialize(new
+                {
+                    message   = response.Reply,
+                    sessionId = response.SessionId,
+                    usage     = BuildUsage(response)
+                }), ct);
+        }
+        else if (response.PendingInvocationId.HasValue)
+        {
+            var pollUrl = $"/invocations/{response.PendingInvocationId}/status";
+            await SseWriter.WriteEventAsync(ctx.Response, "pending_approval",
+                JsonSerializer.Serialize(new
+                {
+                    invocationId = response.PendingInvocationId,
+                    pollUrl,
+                    sessionId    = response.SessionId
+                }), ct);
+        }
+        else if (response.Success)
+        {
             await SseWriter.WriteEventAsync(ctx.Response, "reply",
-                JsonSerializer.Serialize(new { text = response.Reply, sessionId = response.SessionId }), ct);
+                JsonSerializer.Serialize(new
+                {
+                    text      = response.Reply,
+                    sessionId = response.SessionId,
+                    usage     = BuildUsage(response)
+                }), ct);
+        }
         else
+        {
             await SseWriter.WriteErrorAsync(ctx.Response,
                 response.ErrorMessage ?? "Agent error", ct);
+        }
     }
 
     private static (Guid correlationId, string tenantId, string userId) ExtractContext(HttpContext ctx)

@@ -14,6 +14,7 @@ using ToolEngine.Llm.Abstractions;
 using ToolEngine.Llm.Conversion;
 using ToolEngine.Llm.Models;
 using ToolEngine.Llm.Options;
+using ToolEngine.Llm.Guards;
 using ToolEngine.Llm.Session;
 using ToolEngine.Tools.Abstractions.Metadata;
 using ToolEngine.Tools.Registry;
@@ -190,7 +191,11 @@ public sealed class AgentChatTests : IntegrationTestBase
         });
 
         return new AgentOrchestrator(
-            sessionStore, providerRouter, registry, converter, mediator, opts,
+            sessionStore, providerRouter, registry, converter,
+            new ToolGuardFilter(opts, NullLogger<ToolGuardFilter>.Instance),
+            new AgentScopeEnforcer(),
+            new AgentScopeClassifier(opts, NullLogger<AgentScopeClassifier>.Instance),
+            mediator, opts,
             NullLogger<AgentOrchestrator>.Instance);
     }
 }

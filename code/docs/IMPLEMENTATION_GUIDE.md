@@ -1132,31 +1132,42 @@ Recommended: use exponential back-off with a maximum interval of 60 seconds. Do 
   "Llm": {
     "DefaultProvider": "anthropic",
     "Routing": {
-      "FallbackChain": ["anthropic", "openai"]
+      "FallbackChain": ["openai", "ollama"]
+    },
+    "ScopeGuard": {
+      "Enabled": true
+    },
+    "ToolGuard": {
+      "Enabled": true,
+      "AllowedTools": [],
+      "DeniedTools": []
     },
     "Budget": {
-      "MaxTokensPerRequest":  4096,
+      "MaxTokensPerRequest":  2048,
       "MaxTokensPerSession":  32768,
-      "MaxIterations":        10
+      "MaxIterations":        5
     },
     "Providers": {
       "anthropic": {
-        "Model":         "claude-opus-4-5",
-        "ApiKeyEnvVar":  "ANTHROPIC_API_KEY",
-        "MaxTokens":     4096,
-        "TimeoutSeconds": 60
+        "Model":          "claude-sonnet-4-5",
+        "ApiKeyEnvVar":   "ANTHROPIC_API_KEY",
+        "MaxTokens":      2048,
+        "TimeoutSeconds": 30,
+        "Temperature":    1.0
       },
       "openai": {
-        "Model":         "gpt-4o",
-        "ApiKeyEnvVar":  "OPENAI_API_KEY",
-        "MaxTokens":     4096,
-        "TimeoutSeconds": 60
+        "Model":          "gpt-4o",
+        "ApiKeyEnvVar":   "OPENAI_API_KEY",
+        "MaxTokens":      2048,
+        "TimeoutSeconds": 30,
+        "Temperature":    1.0
       },
       "ollama": {
-        "BaseUrl":       "http://localhost:11434",
-        "Model":         "llama3.1:8b",
-        "MaxTokens":     4096,
-        "TimeoutSeconds": 120
+        "BaseUrl":        "http://localhost:11434",
+        "Model":          "llama3.1:8b",
+        "MaxTokens":      2048,
+        "TimeoutSeconds": 120,
+        "Temperature":    1.0
       }
     }
   },
@@ -1186,13 +1197,18 @@ Recommended: use exponential back-off with a maximum interval of 60 seconds. Do 
 | `Jwt` | `Issuer` / `Audience` | — | JWT validation parameters |
 | `Llm` | `DefaultProvider` | `"anthropic"` | Provider used when no tenant or tool override applies |
 | `Llm:Routing` | `FallbackChain` | `[]` | Ordered list of providers tried on `CompleteAsync` failure |
-| `Llm:Budget` | `MaxTokensPerRequest` | `4096` | `max_tokens` sent to the provider API per call |
-| `Llm:Budget` | `MaxTokensPerSession` | `32768` | Cumulative token ceiling per session — circuit breaker |
-| `Llm:Budget` | `MaxIterations` | `10` | Max agentic loop iterations before `MaxIterationsExceeded` |
+| `Llm:ScopeGuard` | `Enabled` | `true` | Pre-flight scope classification. Set `false` only in fully-trusted dev environments |
+| `Llm:ToolGuard` | `Enabled` | `true` | Tool allowlist/denylist enforcement at both LLM-schema and post-selection points |
+| `Llm:ToolGuard` | `AllowedTools` | `[]` | Pattern list. Empty = all tools permitted. Syntax: `"math.*"`, `"math.calculate"`, `"*"` |
+| `Llm:ToolGuard` | `DeniedTools` | `[]` | Pattern list. Overrides `AllowedTools`. A tool in both lists is always blocked |
+| `Llm:Budget` | `MaxTokensPerRequest` | `2048` | `max_tokens` ceiling sent to the provider API per call |
+| `Llm:Budget` | `MaxTokensPerSession` | `32768` | Cumulative token ceiling per session — includes classification + all main-loop calls |
+| `Llm:Budget` | `MaxIterations` | `5` | Max agentic loop iterations before `MaxIterationsExceeded` |
 | `Llm:Providers:{name}` | `Model` | — | Provider-specific model identifier |
 | `Llm:Providers:{name}` | `ApiKeyEnvVar` | — | Environment variable name holding the API key |
 | `Llm:Providers:{name}` | `BaseUrl` | — | Ollama only — base URL of the local server |
-| `Llm:Providers:{name}` | `TimeoutSeconds` | `60` | HTTP request timeout for provider calls |
+| `Llm:Providers:{name}` | `TimeoutSeconds` | `30` | HTTP request timeout for provider calls (Ollama: 120) |
+| `Llm:Providers:{name}` | `Temperature` | `1.0` | Sampling temperature. 0.0 = deterministic. Classifier always forces 0.0 regardless of this value. Anthropic: 0.0–1.0; OpenAI: 0.0–2.0 |
 
 ### Provider routing precedence
 
@@ -1939,26 +1955,46 @@ src/Llm/ToolEngine.Llm/
 │   └── ToolSchemaConverter.cs    ToolDescriptor → LlmToolDefinition; WhenToUse embedded
 ├── Attributes/
 │   └── LlmProviderAttribute.cs   [LlmProvider("ollama")] on tool class — overrides routing
+├── Guards/
+│   ├── ToolGuardFilter.cs        Two-point tool allowlist/denylist enforcement
+│   ├── AgentScopeClassifier.cs   Pre-flight LLM call → structured JSON scope decision
+│   └── AgentScopeEnforcer.cs     Builds session system prompt from tool registry
+├── Models/
+│   ├── LlmMessage.cs             Role (User|Assistant|Tool), Content, ToolCall, ToolCallId
+│   ├── LlmToolDefinition.cs      SanitizedName, OriginalFullName, Description, InputSchemaJson
+│   ├── LlmToolCall.cs            Id, ToolName (sanitized), Arguments (JsonElement)
+│   ├── LlmResponse.cs            Content?, ToolCall?, Usage, StopReason, ErrorMessage?
+│   ├── LlmUsage.cs               InputTokens, OutputTokens, TotalTokens, EstimatedCostUsd
+│   ├── ScopeClassification.cs    IsFullyOutOfScope, InScopePortion, OutOfScopeParts, Usage
+│   └── StopReason.cs             EndTurn | ToolUse | MaxTokens | Error
 ├── Options/
 │   ├── LlmOptions.cs             Root "Llm" config
-│   ├── ProviderOptions.cs        Model, ApiKeyEnvVar, BaseUrl, MaxTokens, TimeoutSeconds
+│   ├── ProviderOptions.cs        Model, ApiKeyEnvVar, BaseUrl, MaxTokens, TimeoutSeconds, Temperature
 │   ├── RoutingOptions.cs         DefaultProvider, FallbackChain
-│   └── BudgetOptions.cs          MaxTokensPerRequest, MaxTokensPerSession, MaxIterations
+│   ├── BudgetOptions.cs          MaxTokensPerRequest, MaxTokensPerSession, MaxIterations
+│   ├── ScopeGuardOptions.cs      Enabled — controls pre-flight scope classification
+│   └── ToolGuardOptions.cs       Enabled, AllowedTools[], DeniedTools[] — tool access control
 └── Extensions/
     └── ServiceCollectionExtensions.cs   AddToolLlm(services, configuration)
 ```
 
 ### 20.3 Providers
 
-#### Anthropic (`claude-opus-4-5` default)
+#### Anthropic (`claude-sonnet-4-5` default)
 
 POST `https://api.anthropic.com/v1/messages` with headers `x-api-key` and `anthropic-version: 2023-06-01`.
 
+The Anthropic API does not accept `role: system` in the messages array. `AnthropicLlmProvider.ExtractSystemContent()` collects all `MessageRole.System` messages from the session and passes them as the top-level `system` field. This is critical — without it the `AgentScopeEnforcer` system prompt (tool list, scope rules, grounding constraints) would never reach the model.
+
 Tool results are sent as `role: user` with `type: tool_result` content blocks (Anthropic wire format — differs from OpenAI).
+
+`temperature` is clamped to 0.0–1.0 (Anthropic's valid range) before the request is built.
 
 #### OpenAI (`gpt-4o` default)
 
 POST `https://api.openai.com/v1/chat/completions` with `Authorization: Bearer {key}`.
+
+`temperature` is clamped to 0.0–2.0 (OpenAI's valid range).
 
 #### Ollama (local, zero cost)
 
@@ -1980,6 +2016,30 @@ math.calculate  →  math__calculate   (dots replaced with double underscore)
 
 ```csharp
 // Simplified — see AgentOrchestrator.cs for full implementation
+
+// Step 0 — ToolGuardFilter (pre-LLM, enforcement point 1/2):
+// Strips tools not permitted by ToolGuard allowlist/denylist before the LLM sees the schema.
+var descriptors = _guardFilter.Filter(_registry.ListAll(tenantId));
+
+// Step 1 — Pre-flight scope classification (primary scope enforcement layer):
+// A dedicated lightweight LLM call (temperature=0, max 512 output tokens) returns structured JSON.
+// This is more reliable than system-prompt-only approaches — capable LLMs override instructions
+// with their training instinct to be helpful; structured JSON is acted on deterministically.
+var scopeCheck = await _scopeClassifier.ClassifyAsync(text, descriptors, provider, provOpts, ct);
+session.RecordUsage(scopeCheck.Usage);  // classification tokens count toward session budget
+
+if (scopeCheck.IsFullyOutOfScope)
+    return AgentResult.OutOfScope(scopeCheck.RefusalMessage, session.SessionId, session.TotalUsage);
+
+var effectiveText = scopeCheck.InScopePortion ?? text; // only tool-addressable portion forwarded
+
+// Step 2 — Inject system prompt once per session (AgentScopeEnforcer):
+// Contains: available tools with WhenToUse/WhenNotToUse, missing-params rule, grounding rule.
+if (!session.Messages.Any(m => m.Role == MessageRole.System))
+    session.AddMessage(LlmMessage.System(_scopeEnforcer.BuildSystemPrompt(descriptors)));
+
+session.AddMessage(LlmMessage.User(effectiveText));
+
 for (int i = 0; i < budget.MaxIterations; i++)
 {
     if (session.TokensUsed >= budget.MaxTokensPerSession)
@@ -1989,21 +2049,40 @@ for (int i = 0; i < budget.MaxIterations; i++)
     session.RecordUsage(response.Usage);
 
     if (response.StopReason == StopReason.EndTurn)
-        return AgentResult.Ok(response.Content!, session.SessionId, ...);
+    {
+        // Append out-of-scope note if classifier trimmed parts of the original request
+        if (scopeCheck.OutOfScopeParts.Length > 0)
+            content += "\n\nNote: [out-of-scope parts listed here] were not processed.";
+        return AgentResult.Ok(content, session.SessionId, session.TotalUsage, ...);
+    }
 
     if (response.StopReason == StopReason.ToolUse)
     {
+        // ToolGuardFilter (post-selection, enforcement point 2/2):
+        // Re-validates before execution — defence against prompt injection where the LLM
+        // is tricked into "calling" a tool it was never shown in the schema.
+        if (!_guardFilter.IsPermitted(originalName))
+        {
+            session.AddMessage(LlmMessage.ToolResult(toolCallId, "{\"error\":\"TOOL_GUARD_BLOCKED\"}"));
+            continue;
+        }
+
         // CallerType = AiAgent — NON-NEGOTIABLE, never overridable by the caller
         var executeCmd = new ExecuteToolCommand<JsonElement, JsonElement>(
             correlationId, tenantId, userId, toolName, "latest", args,
-            ToolType:               ToolType.Logic,
-            ToolNamespace:          ns,
             CallerType:             CallerType.AiAgent,
             GovernanceMetadataJson: JsonSerializer.Serialize(new { provider, model, sessionId }));
 
         var toolResponse = await mediator.Send(executeCmd, ct); // full 8-behavior pipeline
         session.AddMessage(LlmMessage.ToolResult(toolCallId, resultJson));
-        // loop continues — LLM summarizes the result
+
+        // Step 3 — Grounding reminder injection (RAG faithfulness enforcement):
+        // Injected as a User message immediately before the LLM's summary step.
+        // The model sees this in its live context window — far harder to override than a
+        // session-start system prompt rule.
+        session.AddMessage(LlmMessage.User(
+            "Based ONLY on the tool result above, provide a concise answer. " +
+            "Do not include any information not present in the tool result."));
     }
 }
 return AgentResult.MaxIterations(session.SessionId, session.TotalUsage);
@@ -2013,10 +2092,13 @@ return AgentResult.MaxIterations(session.SessionId, session.TotalUsage);
 
 | Guard | Mechanism |
 |---|---|
+| Classification pre-flight | `AgentScopeClassifier` — out-of-scope requests rejected before the loop is entered |
 | Per-iteration token check | `session.TokensUsed >= budget.MaxTokensPerSession` before each LLM call |
-| Iteration limit | `MaxIterations = 10` — prevents O(n²) token explosion in runaway loops |
+| Iteration limit | `MaxIterations = 5` (API) / `3` (CLI) — prevents O(n²) token explosion |
 | Tool approval gate | High/Critical tools suspend the loop, return `ToolPending` result |
-| Tenant daily budget | Existing `DailyBudgetBehavior` — LLM-initiated calls count against the cap |
+| Tenant daily budget | `DailyBudgetBehavior` — LLM-initiated calls count against the daily cap |
+
+**Token budget note:** `session.TokensUsed` accumulates tokens from ALL LLM calls: the scope classification pre-flight, tool-selection calls, and grounded-summary calls. A single tool-invoking turn typically costs 2 500–3 500 tokens as context grows. `MaxTokensPerSession: 32768` supports approximately 8–10 turns.
 
 ### 20.6 Session management
 
@@ -2101,13 +2183,17 @@ data: {"event":"reply","text":"6 times 7 is 42.","sessionId":"...","usage":{...}
 | Control | Implementation |
 |---|---|
 | API keys never in config | Read from environment variable named by `ProviderOptions.ApiKeyEnvVar` |
-| LLM sees only permitted tools | `_registry.ListAll(tenantId)` — tenant namespace allowlist applied |
+| Tool allowlist/denylist (point 1/2) | `ToolGuardFilter.Filter()` — blocked tools stripped from schema before LLM call; model cannot select what it cannot see |
+| Tool allowlist/denylist (point 2/2) | `ToolGuardFilter.IsPermitted()` — post-selection re-validation before MediatR; defence against prompt injection where user text tricks the LLM into "calling" a hidden tool |
+| Scope enforcement (primary) | `AgentScopeClassifier` — dedicated pre-flight LLM call at temperature=0; structured JSON result acted on deterministically before the main loop; system-prompt-only approaches are not used as the sole guard |
+| Scope enforcement (secondary) | `AgentScopeEnforcer` — code-generated system prompt with tool context injected once per session; secondary layer behind the classifier |
+| Response grounding | Grounding reminder injected as a User message after every tool result, immediately before the summary generation step; prevents the LLM from supplementing tool output with general knowledge |
 | All tool calls traverse MediatR | `AgentOrchestrator` calls `mediator.Send(executeCmd)` — no bypass |
-| `CallerType = AiAgent` always | Set in `BuildExecuteToolCommand` — not a parameter exposed to callers |
+| `CallerType = AiAgent` always | Set unconditionally before `mediator.Send` — not a parameter exposed to callers |
 | Approval gate intact | High/Critical tools suspend the loop — `AgentResult.ToolPending` returned |
-| Prompt injection resistance | System prompt is code-generated; user text is isolated as `role: user` |
-| Session token circuit breaker | Checked before every LLM call, not after |
-| Iteration circuit breaker | `MaxIterations = 10` default |
+| Session token circuit breaker | `session.TokensUsed` (includes classification tokens) checked before every LLM call |
+| Iteration circuit breaker | `MaxIterations` default: 5 (API), 3 (CLI) |
+| Input length validation | 4 000-character ceiling on `text`; `X-Llm-Provider` header sanitised with `^[a-zA-Z0-9\-]{1,50}$` |
 | GovernanceMetadataJson | Records `{ provider, model, sessionId }` on every `ToolInvocationRecord` (H5) |
 
 ### 20.9 Per-tool LLM routing override
@@ -2126,17 +2212,101 @@ public sealed class SensitiveAnalysisHandler : LogicToolBase<SensitiveInput, Sen
 
 Routing precedence: `[LlmProvider]` attribute → `Tenant.LlmProviderOverride` → `Llm:DefaultProvider`.
 
-### 20.10 Phase L — file inventory
+### 20.10 Scope guard and tool guard
+
+#### ToolGuardFilter — two-point tool access control
+
+`ToolGuardFilter` enforces an allowlist/denylist on which tools the LLM can see and invoke. It runs at two points:
+
+1. **Pre-LLM schema filter** (`Filter(descriptors)`) — blocked tools are removed from the list sent to the provider. The model never sees them and therefore cannot select them.
+2. **Post-selection validation** (`IsPermitted(fullName)`) — after the LLM returns a `ToolUse` decision, the chosen tool name is re-checked before `mediator.Send`. This is defence in depth against prompt injection: if a malicious user prompt tricks the model into "calling" `admin.delete-all`, the guard blocks it even though it was not in the schema.
+
+Pattern syntax: `"math.calculate"` (exact), `"math.*"` (namespace wildcard), `"*"` (global wildcard). `DeniedTools` always overrides `AllowedTools`.
+
+```json
+"ToolGuard": {
+  "Enabled": true,
+  "AllowedTools": [],        // empty = no allowlist restriction
+  "DeniedTools": ["admin.*", "finance.*"]
+}
+```
+
+#### AgentScopeClassifier — pre-flight LLM scope classification
+
+Before the main orchestration loop, `AgentScopeClassifier` makes a dedicated lightweight LLM call (temperature=0, capped at 512 output tokens) that returns structured JSON:
+
+```json
+{
+  "isFullyOutOfScope": false,
+  "inScopePortion":    "What is 6 times 7?",
+  "outOfScopeParts":   ["Tell me about AWS"],
+  "refusalMessage":    null
+}
+```
+
+Three outcomes:
+
+| Outcome | Action |
+|---|---|
+| Fully in scope | Original text forwarded unchanged |
+| Mixed | Only `inScopePortion` forwarded to main loop; `outOfScopeParts` appended as a note |
+| Fully out of scope | `AgentResult.OutOfScope` returned immediately; no tool loop entered |
+
+**Fail-open:** if the classification call fails or returns unparseable JSON, the request passes through. `AgentScopeEnforcer`'s system prompt applies as a secondary control.
+
+**Why not system-prompt-only:** capable LLMs (Claude, GPT-4o) override scope restrictions in system prompts using their training instinct to be helpful. A dedicated structured JSON call is acted on deterministically by code — not subject to model interpretation.
+
+**Token accounting:** classification tokens are recorded in the session immediately (`session.RecordUsage(scopeCheck.Usage)`) before the budget check runs, so `TokensUsed` reflects true cost.
+
+#### AgentScopeEnforcer — session system prompt
+
+`AgentScopeEnforcer.BuildSystemPrompt(tools)` generates a system prompt injected once per session containing:
+
+1. The full tool list with `Description`, `WhenToUse`, and `WhenNotToUse` for each tool — the LLM uses this for disambiguation and to know what it cannot help with.
+2. **Rule 1** — ask for missing parameters rather than guessing.
+3. **Rule 2** — derive responses exclusively from tool output; do not supplement with general knowledge.
+
+This is the secondary enforcement layer. The primary layer is `AgentScopeClassifier`.
+
+#### Grounding constraint injection
+
+After every `ToolResult` message is added to the session, a `User` message is injected:
+
+> "Based ONLY on the tool result above, provide a concise answer to the original request. Do not include any information that is not present in the tool result."
+
+This appears in the live context window immediately before the LLM's summary generation step. Per the RAG faithfulness pattern, per-turn context injection is significantly more reliable than a session-start system prompt rule for controlling response grounding.
+
+A grounding concern warning is logged (`LogWarning`) when the reply length exceeds 5× the tool result length — a diagnostic signal that the model may have supplemented with general knowledge.
+
+#### Temperature
+
+`ProviderOptions.Temperature` controls sampling randomness:
+
+| Value | Effect | Recommended for |
+|---|---|---|
+| `0.0` | Deterministic | Scope classification (always forced by `AgentScopeClassifier`) |
+| `0.2–0.5` | Focused, concise | Tool-selection and grounded-summary responses |
+| `1.0` | Default sampling | Creative or open-ended replies |
+
+The classifier always overrides to `Temperature = 0.0` for its dedicated call regardless of the operator-configured value. Anthropic accepts 0.0–1.0; OpenAI accepts 0.0–2.0. Both providers clamp the value to their valid range before the request is built.
+
+### 20.11 Phase L — file inventory
 
 | File | Description |
 |---|---|
-| `src/Llm/ToolEngine.Llm/` (new project) | All LLM abstractions, providers, orchestrator |
+| `src/Llm/ToolEngine.Llm/` (new project) | All LLM abstractions, providers, orchestrator, guards |
+| `src/Llm/.../Guards/ToolGuardFilter.cs` | Two-point tool allowlist/denylist enforcement |
+| `src/Llm/.../Guards/AgentScopeClassifier.cs` | Pre-flight scope classification LLM call |
+| `src/Llm/.../Guards/AgentScopeEnforcer.cs` | Session system prompt builder |
+| `src/Llm/.../Models/ScopeClassification.cs` | Classification result including token usage |
+| `src/Llm/.../Options/ScopeGuardOptions.cs` | `Enabled` flag for scope guard |
+| `src/Llm/.../Options/ToolGuardOptions.cs` | `AllowedTools`, `DeniedTools` pattern lists |
 | `src/Application/.../Commands/AgentChatCommand.cs` | New MediatR command |
 | `src/Application/.../Handlers/AgentChatHandler.cs` | Handler — delegates to `AgentOrchestrator` |
 | `src/Hosts/ToolEngine.Api/Endpoints/AgentEndpoints.cs` | `/agent/chat` and `/agent/chat/stream` |
-| `src/Hosts/ToolEngine.Api/appsettings.json` | Added `"Llm"` section |
+| `src/Hosts/ToolEngine.Api/appsettings.json` | Added `"Llm"` section with ScopeGuard, ToolGuard, Temperature |
 | `src/Hosts/ToolEngine.Cli/Repl/ReplLoop.cs` | Added `ask`, `chat`, `chat end` REPL commands |
-| `src/Hosts/ToolEngine.Cli/appsettings.json` | Added `"Llm"` section (`DefaultProvider: ollama`) |
+| `src/Hosts/ToolEngine.Cli/appsettings.json` | Added `"Llm"` section — MaxTokensPerSession raised to 32768 |
 | `tests/ToolEngine.Llm.Tests/` (new project) | 30 unit tests — orchestrator, router, converter, session |
 | `tests/ToolEngine.Integration.Tests/Agent/AgentChatTests.cs` | 4 integration tests — CallerType, GovernanceMetadataJson, pipeline end-to-end |
 

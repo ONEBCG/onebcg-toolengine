@@ -40,23 +40,31 @@ public sealed class UserLookupTool
     public override string Namespace   => "hr";
     public override string Name        => "user-lookup";
     public override string Version     => "v1";
-    public override string Description => "Retrieves a user profile by their UUID.";
+    public override string Description =>
+        "Looks up a user account by UUID and returns the display name, email address, " +
+        "tenant, and active status. Enforces tenant isolation — callers can only retrieve " +
+        "users within their own tenant.";
 
     public override ToolSchema InputSchema => ToolSchema.For<UserLookupInput>(
-        description:   "User identifier to look up.",
-        whenToUse:     "Call when you need the display name, email, or active status of a user " +
-                       "given their system UUID.",
-        whenNotToUse:  "Do not call to search users by name or email — use hr.user-search instead. " +
-                       "Do not call if you already have the user profile in context.",
+        description:   "The UUID of the user account to retrieve.",
+        whenToUse:     "Use when you have a user's system UUID and need their display name, " +
+                       "email address, or account active status. Typical phrasing: " +
+                       "'who is user <uuid>', 'get the profile for <uuid>', 'is user <uuid> active'.",
+        whenNotToUse:  "Do not call without a valid UUID — this tool performs an exact ID lookup " +
+                       "and will return not-found for names, emails, or partial IDs. " +
+                       "Do not call if the user profile is already present in the conversation context.",
         examples:
         [
-            new("Look up user by UUID",
+            new("Look up a user by their system UUID",
                 new UserLookupInput(Guid.Parse("11111111-0000-0000-0000-000000000001")),
                 new UserLookupOutput(
                     Guid.Parse("11111111-0000-0000-0000-000000000001"),
                     "alice@onebcg-default-tenant.com", "Alice Smith", "onebcg-default-tenant", true))
         ],
-        new ToolParameter("userId", "string", "UUID of the user", Format: "uuid"));
+        new ToolParameter("userId", "string",
+                          "UUID v4 of the user account to retrieve. " +
+                          "Example: '11111111-0000-0000-0000-000000000001'.",
+                          Format: "uuid"));
 
     public override ToolSchema OutputSchema => ToolSchema.For<UserLookupOutput>(
         description:   "User profile. Email is sensitive — masked for unauthorised tenants.",

@@ -100,8 +100,18 @@ public sealed class ReplLoop
         }
     }
 
+    // Mirror the API's length limit so CLI and API behave identically
+    private const int MaxTextLength = 4_000;
+
     private async Task AskAsync(string text, string? sessionId, CancellationToken ct)
     {
+        if (text.Length > MaxTextLength)
+        {
+            AnsiConsole.MarkupLine(
+                $"[red]Input too long.[/] Maximum {MaxTextLength} characters — received {text.Length}.");
+            return;
+        }
+
         var command = new AgentChatCommand(
             Guid.NewGuid(),
             "onebcg-default-tenant",   // CLI default tenant
@@ -116,12 +126,24 @@ public sealed class ReplLoop
 
                 if (!response.Success)
                 {
+                    // Scope boundary — conversational refusal, not a system error.
+                    // Display in cyan so the user understands what the agent can help with.
+                    if (response.IsOutOfScope)
+                    {
+                        AnsiConsole.MarkupLine(
+                            $"[cyan]Out of scope:[/] {Markup.Escape(response.Reply ?? "This request is outside the scope of available tools.")}");
+                        return;
+                    }
+
                     if (response.PendingInvocationId.HasValue)
+                    {
                         AnsiConsole.MarkupLine(
                             $"[yellow]Approval required.[/] Invocation ID: {response.PendingInvocationId}");
-                    else
-                        AnsiConsole.MarkupLine(
-                            $"[red]Error:[/] {Markup.Escape(response.ErrorMessage ?? "Unknown error")}");
+                        return;
+                    }
+
+                    AnsiConsole.MarkupLine(
+                        $"[red]Error:[/] {Markup.Escape(response.ErrorMessage ?? "Unknown error")}");
                     return;
                 }
 

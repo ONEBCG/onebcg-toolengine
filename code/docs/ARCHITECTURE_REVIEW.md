@@ -36,7 +36,7 @@ Findings are rated: **Critical** (security/compliance risk), **High** (reliabili
 | Rate limiting / circuit breaking | ✅ Good | Daily budget (E5), OTP rate-limit (E3), loop detection distributed (F4), LLM session + iteration budgets (L) |
 | Scalability | ⚠️ Partial | LLM sessions in ICacheProvider (Redis-ready); no durable approval re-execution |
 | Compliance (SOC 2, GDPR, EU AI Act) | ✅ Good | H1–H5 all resolved; LLM CallerType + GovernanceMetadataJson extend H4/H5 to agent path |
-| LLM provider abstraction | ✅ Good | Anthropic / OpenAI / Ollama; config routing; per-tool + per-tenant override; session budgets |
+| LLM provider abstraction | ✅ Good | Anthropic / OpenAI / Ollama; config routing; per-tool + per-tenant override; scope + tool guard; grounding enforcement; temperature config |
 | Frontend developer console | ✅ Good | React/TypeScript/Vite; flat ToolDescriptor; res.ok error guard; Swagger link |
 | Runtime hardening | ✅ Good | Phase M resolves 8 defects: DI scope, IAsyncDisposable, stale schema, tenant seeding, type mismatch |
 
@@ -342,13 +342,19 @@ See §3. After an approver approves, the tool does not automatically re-execute.
 
 - `ILlmProvider` abstraction with `CompleteAsync(messages, tools, options, ct)` is the standard pattern used by LangChain, Semantic Kernel, and LlamaIndex — provider-neutral and unit-testable with NSubstitute.
 - All three major provider tiers covered: Anthropic (cloud, best tool-use accuracy 2026), OpenAI (cloud, broad ecosystem), Ollama (local, zero cost). Ollama reuses the OpenAI-compatible `/v1/chat/completions` format rather than introducing a third wire format.
-- `ToolSchemaConverter` embeds `WhenToUse` / `WhenNotToUse` in LLM tool descriptions — Anthropic 2025 engineering guidance shows this reduces hallucinated tool selection by ~30% vs description-only schemas.
+- `ToolSchemaConverter` embeds `WhenToUse` / `WhenNotToUse` in LLM tool descriptions with blank-line separators for clear LLM attention to each section — Anthropic 2025 engineering guidance shows this reduces hallucinated tool selection by ~30% vs description-only schemas.
 - `[LlmProvider("ollama")]` attribute enables per-tool routing override without modifying the global config — correct for data-residency constraints where certain tools must not involve external LLM APIs.
 - All LLM-initiated tool calls go through the full 8-behavior MediatR pipeline. No bypass path exists. This is the NIST Cyber AI Profile Dec 2025 "gateway control" requirement: governance must be at the execution boundary, not inside the LLM reasoning loop.
-- `CallerType = CallerType.AiAgent` is set unconditionally in `AgentOrchestrator.BuildExecuteToolCommand` — not a parameter exposed to callers. This satisfies NIST AI Agent Identity paper (Feb 2026): machine identity must be non-delegatable.
+- `CallerType = CallerType.AiAgent` is set unconditionally before `mediator.Send` — not a parameter exposed to callers. This satisfies NIST AI Agent Identity paper (Feb 2026): machine identity must be non-delegatable.
 - `GovernanceMetadataJson` records `{ provider, model, sessionId }` on every LLM-initiated `ToolInvocationRecord` — persists the ISO 42001 traceability requirement through the agentic path.
-- Session token circuit breaker checked *before* each LLM call (not after), which is correct: prevents the "one more call" overshoot pattern that doubles session cost.
-- Iteration limit (`MaxIterations = 10`) addresses the O(n²) token growth characteristic of agentic loops. 40% of production AI teams surveyed in 2026 cited runaway agent cost as their top operational risk.
+- `ToolGuardFilter` enforces allowlist/denylist at **two points**: (1) pre-LLM schema filter so the model never sees blocked tools, and (2) post-selection re-validation before `mediator.Send` — defence in depth against prompt injection. This is the NIST Cyber AI RMF 2025 recommended "dual enforcement" pattern for tool-calling agents.
+- `AgentScopeClassifier` makes a dedicated pre-flight LLM call (temperature=0, ≤512 output tokens) returning structured JSON that the orchestrator acts on deterministically before the main loop is entered. This is more reliable than system-prompt-only approaches: capable LLMs override scope instructions with their training instinct to be helpful. Classification tokens are recorded in the session immediately so `TokensUsed` reflects true cost before the budget gate runs.
+- `AgentScopeEnforcer` builds the session system prompt from live tool registry state (not hardcoded) — includes `WhenToUse`/`WhenNotToUse` per tool plus two behavioural rules (missing params, response grounding).
+- `AnthropicLlmProvider.ExtractSystemContent()` collects session `MessageRole.System` messages and passes them as the Anthropic top-level `system` field. Previously a hardcoded generic string silently overrode the injected prompt — tool-scope rules and grounding constraints never reached the model.
+- Grounding reminder injected as a `User` message after every `ToolResult`, immediately before the LLM summary step. Per the RAG faithfulness pattern (Gao et al. 2023), per-turn context injection is significantly more reliable for controlling response grounding than session-start system prompt rules.
+- `ProviderOptions.Temperature` is configurable per provider. The scope classifier always overrides to `0.0` (deterministic) for its structured JSON call. Anthropic and OpenAI ranges are clamped in each provider before the request is built.
+- Session token circuit breaker accounts for ALL LLM calls per session (classification + tool-selection + summary). A single tool-invoking turn costs ~2 500–3 500 tokens as context grows; `MaxTokensPerSession: 32768` supports ~8–10 turns.
+- Iteration limit (`MaxIterations = 5` API, `3` CLI) addresses the O(n²) token growth characteristic of agentic loops. 40% of production AI teams surveyed in 2026 cited runaway agent cost as their top operational risk.
 
 ### Gaps
 
@@ -481,6 +487,11 @@ The M6 defect was caused by contract drift with no automated detection. A Pact o
 | L9 | `ToolEngine.Llm.Tests` (30 tests) + `AgentChatTests` (4 integration tests) | L | ✅ Done |
 | L10 | CallerType = AiAgent enforced non-negotiably on all LLM-initiated tool calls | L | ✅ Done |
 | L11 | GovernanceMetadataJson `{provider, model, sessionId}` on every LLM-initiated record | L | ✅ Done |
+| L12 | `ToolGuardFilter` — two-point tool allowlist/denylist; pre-LLM schema filter + post-selection validation | L | ✅ Done |
+| L13 | `AgentScopeClassifier` — pre-flight LLM call at temperature=0; structured JSON; classification tokens tracked in session | L | ✅ Done |
+| L14 | `AgentScopeEnforcer` — session system prompt from live registry; grounding reminder injection per tool result | L | ✅ Done |
+| L15 | `ProviderOptions.Temperature` — configurable per provider; Anthropic system prompt bug fixed (`ExtractSystemContent`) | L | ✅ Done |
+| L16 | `MaxTokensPerSession` raised 4096→32768 (CLI) after root-cause: classification + grounding adds ~2 800 tokens/turn | L | ✅ Done |
 
 ### Future / architectural — Phase I
 

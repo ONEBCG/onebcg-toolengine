@@ -14,23 +14,35 @@ public sealed class CalculatorTool : LogicToolBase<CalculatorInput, CalculatorOu
     public override string Namespace   => "math";
     public override string Name        => "calculate";
     public override string Version     => "v1";
-    public override string Description => "Performs basic arithmetic on two operands.";
+    public override string Description =>
+        "Evaluates an arithmetic operation on two numbers and returns the numeric result " +
+        "together with a human-readable expression string (e.g. '37 × 1.8 = 66.6').";
 
     public override ToolSchema InputSchema => ToolSchema.For<CalculatorInput>(
-        description:   "Two numeric operands and an arithmetic operator.",
-        whenToUse:     "Call when the user needs to add, subtract, multiply, or divide two numbers. " +
-                       "Also use for unit conversions that reduce to arithmetic (e.g. °C to °F).",
-        whenNotToUse:  "Do not call for complex expressions with more than two operands. " +
-                       "Do not call for string operations or date arithmetic.",
+        description:   "An arithmetic operation: two numeric operands and the operation to apply.",
+        whenToUse:     "Use for any numeric calculation: sums, differences, products, quotients, " +
+                       "percentages, ratios, and unit conversions (e.g. °C to °F, miles to km). " +
+                       "For multi-step expressions, chain multiple sequential calls. " +
+                       "Handles phrasing like 'what is X times Y', 'divide X by Y', 'X plus Y', " +
+                       "'convert 37°C to Fahrenheit'.",
+        whenNotToUse:  "Do not call for non-numeric input (text, dates, lists). " +
+                       "Do not pass a text expression like '3 + 4' as an operand — parse the " +
+                       "numbers and operator from the user's request before calling this tool.",
         examples:
         [
-            new("Convert 37°C to Fahrenheit (multiply then add)",
+            new("Convert 37°C to Fahrenheit — step 1: multiply by 1.8",
                 new CalculatorInput(37, 1.8, "multiply"),
-                new CalculatorOutput(66.6, "37 × 1.8 = 66.6"))
+                new CalculatorOutput(66.6, "37 × 1.8 = 66.6")),
+            new("Calculate a 15% tip on a £42 bill",
+                new CalculatorInput(42, 0.15, "multiply"),
+                new CalculatorOutput(6.3, "42 × 0.15 = 6.3"))
         ],
-        new ToolParameter("leftOperand",  "number", "Left-hand operand"),
-        new ToolParameter("rightOperand", "number", "Right-hand operand"),
-        new ToolParameter("operator",     "string",  "One of: add, subtract, multiply, divide",
+        new ToolParameter("leftOperand",  "number", "First number in the operation. " +
+                          "Example: 37 for a temperature conversion, 1500 for a salary calculation."),
+        new ToolParameter("rightOperand", "number", "Second number in the operation. " +
+                          "Example: 1.8 for °C-to-°F scale factor, 0.15 for a 15% rate."),
+        new ToolParameter("operator",     "string",  "The arithmetic operation to perform. " +
+                          "One of: add, subtract, multiply, divide.",
                           Enum: ["add", "subtract", "multiply", "divide"]));
 
     public override ToolSchema OutputSchema => ToolSchema.For<CalculatorOutput>(

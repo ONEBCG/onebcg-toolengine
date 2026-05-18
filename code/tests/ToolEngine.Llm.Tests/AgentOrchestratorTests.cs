@@ -15,6 +15,7 @@ using ToolEngine.Llm.Conversion;
 using ToolEngine.Llm.Models;
 using ToolEngine.Llm.Options;
 using ToolEngine.Llm.Routing;
+using ToolEngine.Llm.Guards;
 using ToolEngine.Llm.Session;
 using ToolEngine.Tools.Abstractions.Metadata;
 using ToolEngine.Tools.Registry;
@@ -67,6 +68,9 @@ public sealed class AgentOrchestratorTests
 
         return new AgentOrchestrator(
             sessionStore, providerRouter, registry, new ToolSchemaConverter(),
+            new ToolGuardFilter(opts, NullLogger<ToolGuardFilter>.Instance),
+            new AgentScopeEnforcer(),
+            new AgentScopeClassifier(opts, NullLogger<AgentScopeClassifier>.Instance),
             mediator, opts, NullLogger<AgentOrchestrator>.Instance);
     }
 

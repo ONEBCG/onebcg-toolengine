@@ -29,4 +29,17 @@ public sealed class ProviderOptions
     /// Ollama: 120 s accounts for cold-start model load on first request.
     /// </summary>
     public int     TimeoutSeconds { get; set; } = 30;
+
+    /// <summary>
+    /// Sampling temperature passed to the provider API.
+    /// Controls response randomness: 0.0 = deterministic (best for classification/JSON),
+    /// 1.0 = default creative sampling, 2.0 = maximum randomness (OpenAI scale).
+    /// <para>
+    /// Anthropic accepts 0.0–1.0. OpenAI accepts 0.0–2.0.
+    /// The <see cref="AgentScopeClassifier"/> overrides this to 0.0 for its
+    /// dedicated classification call regardless of what is set here.
+    /// </para>
+    /// Default: 1.0 — preserves the provider's standard sampling behaviour.
+    /// </summary>
+    public double  Temperature    { get; set; } = 1.0;
 }
