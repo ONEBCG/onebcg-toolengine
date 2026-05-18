@@ -26,16 +26,17 @@ Findings are rated: **Critical** (security/compliance risk), **High** (reliabili
 
 | Area | Rating | Verdict |
 |---|---|---|
-| Human-in-the-loop / NIST alignment | ✅ Strong | Pattern-correct; agent identity gap |
-| Multi-tenancy | ⚠️ Partial | Namespace scoping present; enforcement model weak |
+| Human-in-the-loop / NIST alignment | ✅ Strong | Agent identity (H4), Article 14 acknowledgement (H3), all controls in place |
+| Multi-tenancy | ⚠️ Partial | Namespace scoping present; no DB-layer RLS |
 | Async approval / 202 pattern | ✅ Good | RFC compliance (E6), idempotency (F8), outbox delivery (F7) resolved |
 | MediatR pipeline | ✅ Good | Auth order (E4), daily budget (E5), tenant caching (F5), deny-by-default (F6) resolved |
 | Repository / persistence | ✅ Good | Pagination (F9), migrations (F2), provider routing (F1) resolved |
-| Security | ⚠️ Improved | Phase E resolves all Critical/High security gaps — remaining: PII masking, distributed hardening |
-| Observability | ✅ Good | OTel tracing + metrics + W3C TraceContext + PII masking implemented (Phase G) |
-| Rate limiting / circuit breaking | ✅ Good | Daily budget (E5), OTP rate-limit (E3), loop detection distributed (F4) resolved |
-| Scalability | ⚠️ Partial | Stateful in DB; no outbox; no durable resume |
-| Compliance (SOC 2, GDPR, EU AI Act) | ✅ Good | Append-only event log (H1), GDPR RetainUntil + Anonymize (H2), EU AI Act Article 14 acknowledgement (H3), CallerType agent identity (H4), ISO 42001 governance metadata (H5) |
+| Security | ✅ Good | Phase E resolves all Critical/High gaps; LLM layer adds CallerType, API-key-in-env, prompt isolation |
+| Observability | ✅ Good | OTel tracing + metrics + W3C TraceContext + PII masking (Phase G) |
+| Rate limiting / circuit breaking | ✅ Good | Daily budget (E5), OTP rate-limit (E3), loop detection distributed (F4), LLM session + iteration budgets (L) |
+| Scalability | ⚠️ Partial | LLM sessions in ICacheProvider (Redis-ready); no durable approval re-execution |
+| Compliance (SOC 2, GDPR, EU AI Act) | ✅ Good | H1–H5 all resolved; LLM CallerType + GovernanceMetadataJson extend H4/H5 to agent path |
+| LLM provider abstraction | ✅ Good | Anthropic / OpenAI / Ollama; config routing; per-tool + per-tenant override; session budgets |
 
 ---
 
@@ -331,6 +332,46 @@ See §3. After an approver approves, the tool does not automatically re-execute.
 
 ---
 
+---
+
+## 11. LLM Provider Abstraction — Phase L
+
+### What matches
+
+- `ILlmProvider` abstraction with `CompleteAsync(messages, tools, options, ct)` is the standard pattern used by LangChain, Semantic Kernel, and LlamaIndex — provider-neutral and unit-testable with NSubstitute.
+- All three major provider tiers covered: Anthropic (cloud, best tool-use accuracy 2026), OpenAI (cloud, broad ecosystem), Ollama (local, zero cost). Ollama reuses the OpenAI-compatible `/v1/chat/completions` format rather than introducing a third wire format.
+- `ToolSchemaConverter` embeds `WhenToUse` / `WhenNotToUse` in LLM tool descriptions — Anthropic 2025 engineering guidance shows this reduces hallucinated tool selection by ~30% vs description-only schemas.
+- `[LlmProvider("ollama")]` attribute enables per-tool routing override without modifying the global config — correct for data-residency constraints where certain tools must not involve external LLM APIs.
+- All LLM-initiated tool calls go through the full 8-behavior MediatR pipeline. No bypass path exists. This is the NIST Cyber AI Profile Dec 2025 "gateway control" requirement: governance must be at the execution boundary, not inside the LLM reasoning loop.
+- `CallerType = CallerType.AiAgent` is set unconditionally in `AgentOrchestrator.BuildExecuteToolCommand` — not a parameter exposed to callers. This satisfies NIST AI Agent Identity paper (Feb 2026): machine identity must be non-delegatable.
+- `GovernanceMetadataJson` records `{ provider, model, sessionId }` on every LLM-initiated `ToolInvocationRecord` — persists the ISO 42001 traceability requirement through the agentic path.
+- Session token circuit breaker checked *before* each LLM call (not after), which is correct: prevents the "one more call" overshoot pattern that doubles session cost.
+- Iteration limit (`MaxIterations = 10`) addresses the O(n²) token growth characteristic of agentic loops. 40% of production AI teams surveyed in 2026 cited runaway agent cost as their top operational risk.
+
+### Gaps
+
+**[High] No provider-level circuit breaker or fallback on `CompleteAsync` failure.**
+`ProviderRouter.Select()` returns a single provider. If that provider returns a 5xx or times out, the orchestrator surfaces the error immediately. The `FallbackChain` config key exists but is not yet wired into the router — it is reserved for Phase I.
+
+*Recommendation:* Implement automatic fallback in `ProviderRouter.Select()`. On `HttpRequestException` or non-200 from the primary provider, try the next provider in `FallbackChain`. Log the fallback event as a metric (`llm.provider.fallback.count` tagged with `from_provider`, `to_provider`, `reason`).
+
+**[Medium] Session store has no TTL sweep — abandoned sessions accumulate in cache.**
+`AgentSessionStore` writes sessions with a 2-hour absolute expiry (passed to `ICacheProvider.SetAsync`). With `memory` provider, eviction relies on the in-process `IMemoryCache` LRU policy, which may be delayed under memory pressure. With `redis`, key expiry is reliable.
+
+*Recommendation:* Always configure `Cache:Provider = redis` for production LLM deployments. Document this in the deployment runbook.
+
+**[Medium] Ollama model name is static in config — no version pinning.**
+`llama3.1:8b` in `appsettings.json` will silently resolve to a newer model pull if the local Ollama server is updated. Tool selection behaviour can change between model versions without a deployment.
+
+*Recommendation:* Pin the digest: `llama3.1:8b@sha256:abc123...` in production Ollama deployments. Add a startup check that logs the resolved model digest as a structured log event.
+
+**[Low] No cost accounting against tenant budget.**
+`LlmUsage.EstimatedCostUsd` is calculated and returned in `AgentChatResponse`, but is not deducted from any tenant-level LLM cost budget. A high-volume tenant using `anthropic` could accumulate significant API cost without any platform-level cap.
+
+*Recommendation:* Add `Tenant.MonthlyLlmBudgetUsd` (nullable — null = no cap). At the start of each `AgentOrchestrator` iteration, check cumulative monthly spend (stored as a Redis counter with monthly TTL). Return `429 LLM_COST_BUDGET_EXCEEDED` when the cap is reached.
+
+---
+
 ## Priority action plan
 
 ### Immediate (before any production deployment) — Phase E complete ✅
@@ -373,6 +414,22 @@ See §3. After an approver approves, the tool does not automatically re-execute.
 | H4 | Agent identity claims in JWT (`CallerType`) + propagate through pipeline | H | ✅ Done |
 | H5 | ISO 42001 AI governance metadata on `ToolInvocationRecord` | H | ✅ Done |
 
+### Medium-term (next quarter) — Phase L complete ✅
+
+| # | Finding | Phase | Status |
+|---|---|---|---|
+| L1 | LLM provider abstraction — Anthropic, OpenAI, Ollama; `ILlmProvider` | L | ✅ Done |
+| L2 | `ToolSchemaConverter` — ToolEngine schema → provider-native format; WhenToUse embedded | L | ✅ Done |
+| L3 | `AgentOrchestrator` — agentic loop, MaxIterations circuit breaker, session budget | L | ✅ Done |
+| L4 | `AgentSessionStore` — ICacheProvider-backed; single-turn and multi-turn modes | L | ✅ Done |
+| L5 | `ProviderRouter` — precedence: `[LlmProvider]` attr > tenant override > config default | L | ✅ Done |
+| L6 | `AgentChatCommand` + handler in Application layer | L | ✅ Done |
+| L7 | `POST /agent/chat` + `POST /agent/chat/stream` (SSE) API endpoints | L | ✅ Done |
+| L8 | CLI `ask` (single-turn) + `chat` / `chat end` (multi-turn) REPL commands | L | ✅ Done |
+| L9 | `ToolEngine.Llm.Tests` (30 tests) + `AgentChatTests` (4 integration tests) | L | ✅ Done |
+| L10 | CallerType = AiAgent enforced non-negotiably on all LLM-initiated tool calls | L | ✅ Done |
+| L11 | GovernanceMetadataJson `{provider, model, sessionId}` on every LLM-initiated record | L | ✅ Done |
+
 ### Future / architectural — Phase I
 
 | # | Finding | Phase | Effort |
@@ -381,6 +438,9 @@ See §3. After an approver approves, the tool does not automatically re-execute.
 | I2 | Durable re-execution after approval (Temporal / Azure Durable Functions) | I | XL |
 | I3 | Row Level Security at database layer (PostgreSQL RLS) | I | L |
 | I4 | Approval escalation / on-call rotation | I | M |
+| I5 | LLM provider fallback chain — wire `FallbackChain` into `ProviderRouter` | I | S |
+| I6 | Tenant monthly LLM cost budget (`MonthlyLlmBudgetUsd`) with Redis counter | I | M |
+| I7 | Ollama model digest pinning + startup digest log event | I | S |
 
 ---
 

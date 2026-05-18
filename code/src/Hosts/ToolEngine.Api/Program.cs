@@ -20,6 +20,7 @@ using ToolEngine.Infrastructure.Extensions;
 using ToolEngine.Tools.Executor.Extensions;
 using ToolEngine.Tools.Registry.Extensions;
 using ToolEngine.Tools.Samples.Extensions;
+using ToolEngine.Llm.Extensions;
 
 Log.Logger = new LoggerConfiguration()
     .WriteTo.Console()
@@ -80,6 +81,7 @@ try
     builder.Services.AddToolSamples();
     builder.Services.AddToolExecutor();
     builder.Services.AddToolApplication();
+    builder.Services.AddToolLlm(builder.Configuration);
 
     // ── Infrastructure — modular DB + cache provider (F1 / F3) ──────────────
     var connStr   = builder.Configuration.GetConnectionString("Default")
@@ -205,19 +207,25 @@ try
     }
 
     // ── Database init (F2) ──────────────────────────────────────────────────────
-    // Development: EnsureCreated — no migration files required, fast iteration.
-    // Production:  MigrateAsync  — applies pending EF Core migrations at startup.
+    // Development: EnsureDeleted + EnsureCreated — always rebuilds the SQLite schema
+    //   from the current model on startup. This prevents stale-schema errors (e.g.
+    //   "no such table: OutboxMessages") whenever new entities are added. Dev data
+    //   is intentionally ephemeral; use seeds or test fixtures, not the dev DB.
     //
-    // To create the initial migration:
-    //   dotnet ef migrations add InitialCreate \
-    //     --project src/Infrastructure/ToolEngine.Infrastructure \
-    //     --startup-project src/Hosts/ToolEngine.Api
+    // Production:  MigrateAsync — applies pending EF Core migrations. Create the
+    //   initial migration before first production deploy:
+    //     dotnet ef migrations add InitialCreate \
+    //       --project src/Infrastructure/ToolEngine.Infrastructure \
+    //       --startup-project src/Hosts/ToolEngine.Api
     {
         using var dbScope = app.Services.CreateScope();
         var db = dbScope.ServiceProvider
                         .GetRequiredService<ToolEngine.Infrastructure.Persistence.AppDbContext>();
         if (app.Environment.IsDevelopment())
-            db.Database.EnsureCreated();
+        {
+            await db.Database.EnsureDeletedAsync();
+            await db.Database.EnsureCreatedAsync();
+        }
         else
             await db.Database.MigrateAsync();
     }
@@ -243,6 +251,7 @@ try
     app.MapInvocationEndpoints();
     app.MapHealthEndpoints();
     app.MapDevEndpoints();
+    app.MapAgentEndpoints();
 
     app.Run();
 }

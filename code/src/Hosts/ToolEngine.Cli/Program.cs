@@ -6,6 +6,7 @@ using ToolEngine.Application.Extensions;
 using ToolEngine.Cli.Guards;
 using ToolEngine.Cli.Repl;
 using ToolEngine.Infrastructure.Extensions;
+using ToolEngine.Llm.Extensions;
 using ToolEngine.Tools.Abstractions.Interfaces;
 using ToolEngine.Tools.Executor.Extensions;
 using ToolEngine.Tools.Registry.Extensions;
@@ -18,12 +19,13 @@ Log.Logger = new LoggerConfiguration()
 
 var host = Host.CreateDefaultBuilder(args)
     .UseSerilog()
-    .ConfigureServices(services =>
+    .ConfigureServices((context, services) =>
     {
         services.AddToolRegistry();
         services.AddToolSamples();
         services.AddToolExecutor();
         services.AddToolApplication();
+        services.AddToolLlm(context.Configuration);
         services.AddToolInfrastructure(
             opt => opt.UseSqlite("Data Source=toolengine-cli.db"));
 

@@ -4,8 +4,10 @@ import { fetchDevToken, fetchTools, fetchHealth } from './api'
 import { ToolList } from './components/ToolList'
 import { ToolInvoker } from './components/ToolInvoker'
 import { ResponsePanel } from './components/ResponsePanel'
+import { AgentChat } from './components/AgentChat'
 
 type AppState = 'loading' | 'ready' | 'error'
+type ActiveTab = 'tools' | 'agent'
 
 export default function App() {
   const [state, setState] = useState<AppState>('loading')
@@ -14,6 +16,7 @@ export default function App() {
   const [selected, setSelected] = useState<ToolDescriptor | null>(null)
   const [response, setResponse] = useState<ToolResponse | null>(null)
   const [healthy, setHealthy] = useState<boolean | null>(null)
+  const [activeTab, setActiveTab] = useState<ActiveTab>('agent')
 
   useEffect(() => {
     async function init() {
@@ -65,6 +68,20 @@ export default function App() {
           <span className="app-brand">ONE BCG</span>
           <span className="app-title">ToolEngine</span>
         </div>
+        <div className="app-header-center">
+          <button
+            className={`tab-btn ${activeTab === 'agent' ? 'tab-btn--active' : ''}`}
+            onClick={() => setActiveTab('agent')}
+          >
+            Agent Chat
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'tools' ? 'tab-btn--active' : ''}`}
+            onClick={() => setActiveTab('tools')}
+          >
+            Tools ({tools.length})
+          </button>
+        </div>
         <div className="app-header-right">
           <span className={`health-badge ${healthy ? 'health-badge--ok' : 'health-badge--err'}`}>
             {healthy ? '● API healthy' : '● API unhealthy'}
@@ -73,27 +90,33 @@ export default function App() {
         </div>
       </header>
 
-      <div className="app-body">
-        <ToolList
-          tools={tools}
-          selected={selected}
-          onSelect={handleSelectTool}
-        />
+      {activeTab === 'agent' ? (
+        <div className="app-agent">
+          <AgentChat />
+        </div>
+      ) : (
+        <div className="app-body">
+          <ToolList
+            tools={tools}
+            selected={selected}
+            onSelect={handleSelectTool}
+          />
 
-        <main className="app-main">
-          {selected ? (
-            <>
-              <ToolInvoker
-                tool={selected}
-                onResponse={setResponse}
-              />
-              <ResponsePanel response={response} />
-            </>
-          ) : (
-            <div className="app-empty">Select a tool from the sidebar.</div>
-          )}
-        </main>
-      </div>
+          <main className="app-main">
+            {selected ? (
+              <>
+                <ToolInvoker
+                  tool={selected}
+                  onResponse={setResponse}
+                />
+                <ResponsePanel response={response} />
+              </>
+            ) : (
+              <div className="app-empty">Select a tool from the sidebar.</div>
+            )}
+          </main>
+        </div>
+      )}
     </div>
   )
 }

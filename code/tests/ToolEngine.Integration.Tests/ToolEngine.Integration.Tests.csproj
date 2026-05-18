@@ -27,5 +27,7 @@
     <ProjectReference Include="..\..\src\Core\ToolEngine.Core.Domain\ToolEngine.Core.Domain.csproj" />
     <ProjectReference Include="..\..\src\Infrastructure\ToolEngine.Infrastructure\ToolEngine.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\Tools\ToolEngine.Tools.Abstractions\ToolEngine.Tools.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\Tools\ToolEngine.Tools.Registry\ToolEngine.Tools.Registry.csproj" />
+    <ProjectReference Include="..\..\src\Llm\ToolEngine.Llm\ToolEngine.Llm.csproj" />
   </ItemGroup>
 </Project>

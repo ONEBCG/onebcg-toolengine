@@ -21,6 +21,17 @@ public static class SseWriter
         await response.Body.FlushAsync(ct);
     }
 
+    public static async Task WriteEventAsync(
+        HttpResponse      response,
+        string            eventName,
+        string            data,
+        CancellationToken ct)
+    {
+        await response.WriteAsync($"event: {eventName}\n", ct);
+        await response.WriteAsync($"data: {data}\n\n", ct);
+        await response.Body.FlushAsync(ct);
+    }
+
     public static async Task WriteErrorAsync(
         HttpResponse      response,
         string            message,

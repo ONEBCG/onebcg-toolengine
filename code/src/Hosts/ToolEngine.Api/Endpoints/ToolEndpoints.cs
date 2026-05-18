@@ -7,6 +7,8 @@ using ToolEngine.Application.Commands;
 using ToolEngine.Api.Streaming;
 using ToolEngine.Core.Domain.Contracts;
 using ToolEngine.Core.Domain.Enums;
+using ToolEngine.Core.Domain.Schema;
+using ToolEngine.Tools.Abstractions.Metadata;
 using ToolEngine.Tools.Registry;
 
 public static class ToolEndpoints
@@ -42,7 +44,7 @@ public static class ToolEndpoints
     }
 
     private static IResult ListTools(IToolRegistry registry) =>
-        Results.Ok(registry.ListAll());
+        Results.Ok(registry.ListAll().Select(ToolSummaryResponse.From).ToList());
 
     private static IResult GetVersions(string ns, string name, IToolRegistry registry)
     {
@@ -179,4 +181,33 @@ public static class ToolEndpoints
 
         return (correlationId, tenantId, userId);
     }
+}
+
+/// <summary>
+/// Serializable projection of <see cref="ToolDescriptor"/> for the GET /tools listing.
+/// Excludes <c>HandlerType</c> (<see cref="System.Type"/>) which STJ cannot serialize.
+/// </summary>
+internal sealed record ToolSummaryResponse(
+    string     FullName,
+    string     Namespace,
+    string     Name,
+    string     Version,
+    string     Description,
+    ToolType   Type,
+    bool       IsEnabled,
+    string?    TenantId,
+    ToolSchema InputSchema,
+    ToolSchema OutputSchema)
+{
+    internal static ToolSummaryResponse From(ToolDescriptor d) => new(
+        FullName:     d.FullName,
+        Namespace:    d.Metadata.Namespace,
+        Name:         d.Metadata.Name,
+        Version:      d.Metadata.Version,
+        Description:  d.Metadata.Description,
+        Type:         d.Metadata.Type,
+        IsEnabled:    d.Metadata.IsEnabled,
+        TenantId:     d.TenantId,
+        InputSchema:  d.Metadata.InputSchema,
+        OutputSchema: d.Metadata.OutputSchema);
 }

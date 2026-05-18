@@ -1,4 +1,4 @@
-import type { ToolDescriptor, ToolResponse } from './types'
+import type { AgentChatResponse, ToolDescriptor, ToolResponse } from './types'
 
 const BASE = 'http://localhost:5174'
 
@@ -27,11 +27,12 @@ export async function fetchHealth(): Promise<boolean> {
 }
 
 export async function invokeTool(
+  namespace: string,
   name: string,
   version: string,
   input: unknown,
 ): Promise<ToolResponse> {
-  const res = await fetch(`${BASE}/tools/${name}/${version}/invoke`, {
+  const res = await fetch(`${BASE}/tools/${namespace}/${name}/${version}/invoke`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -39,5 +40,24 @@ export async function invokeTool(
     },
     body: JSON.stringify(input),
   })
+  return res.json()
+}
+
+export async function agentChat(
+  text: string,
+  sessionId?: string,
+): Promise<AgentChatResponse> {
+  const res = await fetch(`${BASE}/agent/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${_token}`,
+    },
+    body: JSON.stringify({ text, sessionId }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { detail?: string }
+    throw new Error(err.detail ?? `Agent error: ${res.status}`)
+  }
   return res.json()
 }

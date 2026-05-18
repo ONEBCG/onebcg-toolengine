@@ -1,0 +1,169 @@
+namespace ToolEngine.Llm.Providers;
+
+using System.Net.Http.Json;
+using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using ToolEngine.Core.Abstractions.Security;
+using ToolEngine.Llm.Abstractions;
+using ToolEngine.Llm.Models;
+using ToolEngine.Llm.Options;
+
+public sealed class AnthropicLlmProvider : ILlmProvider
+{
+    public string ProviderName => "anthropic";
+
+    private readonly IHttpClientFactory             _httpFactory;
+    private readonly ISecretVault                   _secretVault;
+    private readonly ILogger<AnthropicLlmProvider>  _logger;
+
+    public AnthropicLlmProvider(
+        IHttpClientFactory            httpFactory,
+        ISecretVault                  secretVault,
+        ILogger<AnthropicLlmProvider> logger)
+    {
+        _httpFactory  = httpFactory;
+        _secretVault  = secretVault;
+        _logger       = logger;
+    }
+
+    public async Task<LlmResponse> CompleteAsync(
+        IReadOnlyList<LlmMessage>        messages,
+        IReadOnlyList<LlmToolDefinition> tools,
+        ProviderOptions                  options,
+        CancellationToken                ct = default)
+    {
+        var apiKey = ResolveApiKey(options);
+        if (apiKey is null)
+            return new LlmResponse(StopReason.Error, null, null, LlmUsage.Zero, "Anthropic API key not configured.");
+
+        // Build tools array
+        var toolsArray = tools.Select(t =>
+        {
+            var schema = JsonDocument.Parse(t.InputSchemaJson).RootElement;
+            return new { name = t.SanitizedName, description = t.Description, input_schema = schema };
+        }).ToArray();
+
+        // Build messages — Anthropic does not support role:system in messages; system goes as top-level field
+        var anthropicMessages = BuildAnthropicMessages(messages);
+
+        var requestBody = new
+        {
+            model      = options.Model,
+            max_tokens = options.MaxTokens,
+            system     = "You are a helpful assistant with access to tools. Use tools when appropriate to fulfill the user's request accurately.",
+            messages   = anthropicMessages,
+            tools      = toolsArray
+        };
+
+        var http    = _httpFactory.CreateClient("anthropic");
+        var timeout = TimeSpan.FromSeconds(options.TimeoutSeconds > 0 ? options.TimeoutSeconds : 30);
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(timeout);
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
+            request.Headers.Add("x-api-key", apiKey);
+            request.Headers.Add("anthropic-version", "2023-06-01");
+            request.Content = JsonContent.Create(requestBody);
+
+            using var response = await http.SendAsync(request, cts.Token);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var err = await response.Content.ReadAsStringAsync(ct);
+                _logger.LogError("Anthropic API error {Status}: {Body}", response.StatusCode, err);
+                return new LlmResponse(StopReason.Error, null, null, LlmUsage.Zero, $"Anthropic API error: {response.StatusCode}");
+            }
+
+            using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+            var root       = doc.RootElement;
+            var stopReason = root.GetProperty("stop_reason").GetString();
+            var usage      = ParseAnthropicUsage(root);
+
+            if (stopReason == "tool_use")
+            {
+                var content = root.GetProperty("content");
+                foreach (var item in content.EnumerateArray())
+                {
+                    if (item.GetProperty("type").GetString() == "tool_use")
+                    {
+                        var id        = item.GetProperty("id").GetString()!;
+                        var name      = item.GetProperty("name").GetString()!;
+                        var inputElem = item.GetProperty("input");
+                        return new LlmResponse(StopReason.ToolUse, null, new LlmToolCall(id, name, inputElem.Clone()), usage);
+                    }
+                }
+            }
+
+            // EndTurn — extract text
+            var text = ExtractAnthropicText(root);
+            return new LlmResponse(StopReason.EndTurn, text, null, usage);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return new LlmResponse(StopReason.Error, null, null, LlmUsage.Zero, "Anthropic request timed out.");
+        }
+    }
+
+    private static List<object> BuildAnthropicMessages(IReadOnlyList<LlmMessage> messages)
+    {
+        var result = new List<object>();
+        foreach (var m in messages)
+        {
+            if (m.Role == MessageRole.System) continue; // handled as top-level system field
+
+            if (m.Role == MessageRole.Tool && m.ToolCallId is not null)
+            {
+                // Tool results go as role:user with tool_result content
+                result.Add(new
+                {
+                    role    = "user",
+                    content = new[] { new { type = "tool_result", tool_use_id = m.ToolCallId, content = m.Content ?? "" } }
+                });
+            }
+            else if (m.Role == MessageRole.Assistant && m.ToolCall is not null)
+            {
+                result.Add(new
+                {
+                    role    = "assistant",
+                    content = new[] { new { type = "tool_use", id = m.ToolCall.Id, name = m.ToolCall.ToolName, input = m.ToolCall.Arguments } }
+                });
+            }
+            else
+            {
+                result.Add(new { role = m.Role == MessageRole.Assistant ? "assistant" : "user", content = m.Content ?? "" });
+            }
+        }
+        return result;
+    }
+
+    private static string? ExtractAnthropicText(JsonElement root)
+    {
+        if (!root.TryGetProperty("content", out var content)) return null;
+        foreach (var item in content.EnumerateArray())
+        {
+            if (item.TryGetProperty("type", out var t) && t.GetString() == "text")
+                return item.GetProperty("text").GetString();
+        }
+        return null;
+    }
+
+    private static LlmUsage ParseAnthropicUsage(JsonElement root)
+    {
+        if (!root.TryGetProperty("usage", out var u)) return LlmUsage.Zero;
+        var input  = u.TryGetProperty("input_tokens",  out var i) ? i.GetInt32() : 0;
+        var output = u.TryGetProperty("output_tokens", out var o) ? o.GetInt32() : 0;
+        // claude-sonnet-4-5 pricing: $3 / $15 per 1 M input / output tokens (2026).
+        // Multipliers: input × 0.000003 = $/token, output × 0.000015 = $/token.
+        var cost = (input * 0.000003m) + (output * 0.000015m);
+        return new LlmUsage(input, output, cost);
+    }
+
+    private static string? ResolveApiKey(ProviderOptions options)
+    {
+        if (!string.IsNullOrWhiteSpace(options.ApiKeyEnvVar))
+            return System.Environment.GetEnvironmentVariable(options.ApiKeyEnvVar);
+        return null;
+    }
+}

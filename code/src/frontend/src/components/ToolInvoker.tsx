@@ -32,6 +32,7 @@ export function ToolInvoker({ tool, onResponse }: Props) {
     setLoading(true)
     try {
       const response = await invokeTool(
+        tool.metadata.namespace,
         tool.metadata.name,
         tool.metadata.version,
         parsed,

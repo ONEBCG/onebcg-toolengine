@@ -4,7 +4,6 @@ using System.Text.Json;
 using MediatR;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -236,43 +235,17 @@ internal sealed class StubToolHandler
 /// <summary>
 /// AppDbContext subclass used exclusively in integration tests.
 ///
-/// Problem: SQLite's EF Core provider cannot translate <c>DateTimeOffset</c>
-/// comparisons (e.g. <c>r.InvokedAt &gt;= startOfDayUtc</c> in DailyBudgetBehavior)
-/// because SQLite has no native datetime type and EF stores DateTimeOffset values as
-/// TEXT by default.
+/// The SQLite <c>DateTimeOffset → long</c> value converters that were previously
+/// applied here have been promoted into <see cref="AppDbContext.OnModelCreating"/>
+/// behind a provider guard (<c>Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite"</c>).
 ///
-/// Fix: override OnModelCreating to register a bulk <c>DateTimeOffset</c> →
-/// <c>long</c> (Unix milliseconds) value converter for every property in every
-/// entity type. Long values are fully sortable by SQLite so all comparison operators
-/// translate correctly.
+/// Moving them to the base context fixes the production runtime bugs in
+/// <c>NotificationDispatchService</c> (<c>NextRetryAt &lt;= now</c>) and
+/// <c>DailyBudgetBehavior</c> (<c>InvokedAt &gt;= startOfDayUtc</c>) where SQLite
+/// could not translate <c>DateTimeOffset</c> range comparisons stored as TEXT.
 /// </summary>
 internal sealed class TestAppDbContext : AppDbContext
 {
     public TestAppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
-
-    protected override void OnModelCreating(Microsoft.EntityFrameworkCore.ModelBuilder builder)
-    {
-        base.OnModelCreating(builder);
-
-        // Apply DateTimeOffset → long converter to every DateTimeOffset property
-        // so that SQLite can translate range comparisons (>=, <=, >, <).
-        var converter = new ValueConverter<DateTimeOffset, long>(
-            dto => dto.ToUnixTimeMilliseconds(),
-            ms  => DateTimeOffset.FromUnixTimeMilliseconds(ms));
-
-        var nullableConverter = new ValueConverter<DateTimeOffset?, long?>(
-            dto => dto.HasValue ? dto.Value.ToUnixTimeMilliseconds() : (long?)null,
-            ms  => ms.HasValue  ? DateTimeOffset.FromUnixTimeMilliseconds(ms.Value) : null);
-
-        foreach (var entityType in builder.Model.GetEntityTypes())
-        {
-            foreach (var property in entityType.GetProperties())
-            {
-                if (property.ClrType == typeof(DateTimeOffset))
-                    property.SetValueConverter(converter);
-                else if (property.ClrType == typeof(DateTimeOffset?))
-                    property.SetValueConverter(nullableConverter);
-            }
-        }
-    }
+    // No OnModelCreating override needed — base applies SQLite converters automatically.
 }

@@ -25,6 +25,7 @@
 17. [Provider Abstractions — Phase F](#17-provider-abstractions--phase-f)
 18. [Observability — Phase G](#18-observability--phase-g)
 19. [Compliance — Phase H](#19-compliance--phase-h)
+20. [LLM Agent Layer — Phase L](#20-llm-agent-layer--phase-l)
 
 ---
 
@@ -61,6 +62,9 @@ onebcg-toolengine/
         ├── Application/
         │   └── ToolEngine.Application              (CQRS commands, MediatR handlers, behaviors)
         │
+        ├── Llm/
+        │   └── ToolEngine.Llm                      (LLM providers, agent orchestrator, session store)
+        │
         ├── Infrastructure/
         │   └── ToolEngine.Infrastructure           (EF Core, repositories, approval channels)
         │
@@ -73,17 +77,22 @@ onebcg-toolengine/
 
 ```
 Hosts  →  Application  →  Tools.Abstractions  →  Core.Domain  →  Core.Abstractions
-                       ↘  Core.Domain
+       →  Llm          ↘  Core.Domain
+                       →  Tools.Registry
 Infrastructure         →  Core.Abstractions
                        →  Core.Domain
                        →  Tools.Abstractions
+Llm                    →  Application
+                       →  Tools.Registry
+                       →  Core.Domain
 ```
 
 Rules enforced by project references:
 - `Core.Abstractions` has no NuGet or project dependencies.
 - `Core.Domain` depends only on `Core.Abstractions`.
-- `Infrastructure` does not depend on Application. The composition root (host) wires them.
-- `Tools.Abstractions` does not reference Infrastructure.
+- `Infrastructure` does not depend on Application or Llm. The composition root (host) wires them.
+- `Tools.Abstractions` does not reference Infrastructure or Llm.
+- `Llm` does not reference Infrastructure — it uses `ICacheProvider` (Core.Abstractions) for session storage.
 
 ---
 
@@ -809,28 +818,67 @@ dotnet run
 ```
 
 ```
-toolengine> help
-  invoke <namespace> <name> <version> <json>   Execute a tool
-  list                                          List registered tools
-  search <intent>                               Semantic tool search
-  exit                                          Exit the REPL
+ToolEngine CLI — type help for commands.
+
+> help
+  list                                          List all registered tools.
+  invoke <ns> <name> <version> <json>          Invoke a tool directly with JSON input.
+  ask <text>                                    Single-turn: LLM selects and invokes the right tool.
+  chat                                          Enter multi-turn chat session.
+  chat end                                      End the current chat session.
+  exit / quit                                   Exit the REPL.
 ```
 
-### 11.2 Invoking a tool
+### 11.2 Invoking a tool directly
 
 ```
-toolengine> invoke math calculate v1 {"a":10,"b":5}
+> invoke math calculate v1 {"a":10,"b":5,"operator":"add"}
+Tool result:
 {
-  "correlationId": "...",
-  "success": true,
-  "data": { "result": 15 },
-  "metrics": { "durationMs": 3 }
+  "result": 15
 }
 ```
 
-### 11.3 Approval prompt (CLI)
+### 11.3 Single-turn LLM (ask)
 
-When a `[RequiresApproval]` tool is invoked in the CLI, `ConsoleApprovalGate` halts execution and presents a coloured prompt:
+The `ask` command sends free-text to the configured LLM. The LLM selects the correct tool, the full 8-behavior MediatR pipeline executes it, and the result is fed back to the LLM for a natural-language reply.
+
+```
+> ask what is 25 times 48?
+Tool selected: math.calculate
+Tool result:
+{
+  "result": 1200
+}
+
+25 times 48 is 1200.
+Tokens: 142 | Cost: $0.0004 | Session: a1b2c3d4...
+```
+
+### 11.4 Multi-turn chat
+
+`chat` creates a persistent session. Every subsequent line is sent as a message in that session. History is preserved across turns in the session store (backed by `ICacheProvider`).
+
+```
+> chat
+Chat mode started. Type chat end to exit.
+chat> What is the capital of France?
+Paris is the capital of France.
+Tokens: 88 | Cost: $0.0002 | Session: f7e6d5c4...
+
+chat> And what is its population?
+The population of Paris proper is approximately 2.1 million...
+Tokens: 210 | Cost: $0.0006 | Session: f7e6d5c4...
+
+chat> chat end
+Chat session ended.
+```
+
+The default CLI provider is `ollama` (zero API cost for local development). Override via `appsettings.json` or `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` environment variables.
+
+### 11.5 Approval prompt (CLI)
+
+When a `[RequiresApproval]` tool is invoked in the CLI (directly or via LLM selection), `ConsoleApprovalGate` halts execution and presents a coloured prompt:
 
 ```
 ⚠  Approval Required — High Risk
@@ -1022,6 +1070,37 @@ Recommended: use exponential back-off with a maximum interval of 60 seconds. Do 
   "LoopDetection": {
     "MaxCallsPerCorrelation": 10
   },
+  "Llm": {
+    "DefaultProvider": "anthropic",
+    "Routing": {
+      "FallbackChain": ["anthropic", "openai"]
+    },
+    "Budget": {
+      "MaxTokensPerRequest":  4096,
+      "MaxTokensPerSession":  32768,
+      "MaxIterations":        10
+    },
+    "Providers": {
+      "anthropic": {
+        "Model":         "claude-opus-4-5",
+        "ApiKeyEnvVar":  "ANTHROPIC_API_KEY",
+        "MaxTokens":     4096,
+        "TimeoutSeconds": 60
+      },
+      "openai": {
+        "Model":         "gpt-4o",
+        "ApiKeyEnvVar":  "OPENAI_API_KEY",
+        "MaxTokens":     4096,
+        "TimeoutSeconds": 60
+      },
+      "ollama": {
+        "BaseUrl":       "http://localhost:11434",
+        "Model":         "llama3.1:8b",
+        "MaxTokens":     4096,
+        "TimeoutSeconds": 120
+      }
+    }
+  },
   "Serilog": {
     "MinimumLevel": {
       "Default": "Information",
@@ -1046,6 +1125,22 @@ Recommended: use exponential back-off with a maximum interval of 60 seconds. Do 
 | `LoopDetection` | `MaxCallsPerCorrelation` | `10` | Max same-tool invocations before circuit opens |
 | `Jwt` | `Secret` | — | HMAC-SHA256 signing key (min 256 bits) |
 | `Jwt` | `Issuer` / `Audience` | — | JWT validation parameters |
+| `Llm` | `DefaultProvider` | `"anthropic"` | Provider used when no tenant or tool override applies |
+| `Llm:Routing` | `FallbackChain` | `[]` | Ordered list of providers tried on `CompleteAsync` failure |
+| `Llm:Budget` | `MaxTokensPerRequest` | `4096` | `max_tokens` sent to the provider API per call |
+| `Llm:Budget` | `MaxTokensPerSession` | `32768` | Cumulative token ceiling per session — circuit breaker |
+| `Llm:Budget` | `MaxIterations` | `10` | Max agentic loop iterations before `MaxIterationsExceeded` |
+| `Llm:Providers:{name}` | `Model` | — | Provider-specific model identifier |
+| `Llm:Providers:{name}` | `ApiKeyEnvVar` | — | Environment variable name holding the API key |
+| `Llm:Providers:{name}` | `BaseUrl` | — | Ollama only — base URL of the local server |
+| `Llm:Providers:{name}` | `TimeoutSeconds` | `60` | HTTP request timeout for provider calls |
+
+### Provider routing precedence
+
+1. `[LlmProvider("ollama")]` attribute on the tool handler class
+2. `Tenant.LlmProviderOverride` (set via `tenant.SetLlmProvider(...)`)
+3. `Llm:DefaultProvider` from `appsettings.json`
+4. `Llm:Routing:FallbackChain` — tried in order if the selected provider fails
 
 ### Environment-specific overrides
 
@@ -1054,6 +1149,13 @@ Recommended: use exponential back-off with a maximum interval of 60 seconds. Do 
 APPROVAL__BASEURL="https://app.onebcg.com"
 APPROVAL__WEBHOOKURL="https://hooks.slack.com/services/..."
 JWT__SECRET="$(cat /run/secrets/jwt_secret)"
+
+# LLM provider API keys — never in config files
+ANTHROPIC_API_KEY="sk-ant-..."
+OPENAI_API_KEY="sk-..."
+
+# Override default provider for a deployment
+LLM__DEFAULTPROVIDER="openai"
 ```
 
 ---
@@ -1705,6 +1807,279 @@ No schema is enforced — the platform is a neutral carrier. Downstream complian
 | `Infrastructure/Approval/AsyncApprovalGate.cs` | AcknowledgementStatement generation for High/Critical — H3 |
 | `Infrastructure/Extensions/ServiceCollectionExtensions.cs` | Register IRepository/IReadRepository<ToolInvocationEvent> — H1 |
 | `Hosts/Api/Endpoints/ToolEndpoints.cs` | Read caller_type claim, X-Governance-Metadata header — H4, H5 |
+
+---
+
+---
+
+## 20. LLM Agent Layer — Phase L
+
+Phase L adds a multi-provider LLM orchestration layer. Callers supply free-text; the LLM selects and invokes the correct tool automatically. All tool governance (auth, budget, approval, audit) applies unchanged — the LLM is an orchestrator, not a bypass.
+
+### 20.1 Architecture
+
+```
+Text input (CLI ask / POST /agent/chat)
+        │
+        ▼
+┌─────────────────────────────┐
+│  AgentChatCommand           │  MediatR command — text + optional sessionId
+└────────────┬────────────────┘
+             │
+        ┌────▼──────────────────────────────┐
+        │  AgentOrchestrator                │  Core agentic loop (MaxIterations circuit breaker)
+        │  ┌────────────────────────────┐   │
+        │  │ ILlmProvider               │   │  Anthropic / OpenAI / Ollama
+        │  │ CompleteAsync(...)         │   │  (selected by IProviderRouter)
+        │  └────────────────────────────┘   │
+        │  ┌────────────────────────────┐   │
+        │  │ ToolSchemaConverter        │   │  ToolEngine schema → provider format
+        │  └────────────────────────────┘   │
+        │  ┌────────────────────────────┐   │
+        │  │ AgentSessionStore          │   │  Message history + token accumulator
+        │  └────────────────────────────┘   │  (backed by ICacheProvider)
+        └────────────┬──────────────────────┘
+                     │ tool_use decision
+                     ▼
+        ┌────────────────────────────────┐
+        │  MediatR Pipeline              │  UNCHANGED — all 8 behaviors apply
+        │  (TenantAuth → Approval        │  CallerType = AiAgent (non-negotiable)
+        │   → Audit → Budget …)          │  GovernanceMetadataJson = {provider, model, sessionId}
+        └────────────┬───────────────────┘
+                     │ ToolResponse
+                     ▼
+        Result fed back to LLM → natural-language reply returned to caller
+```
+
+### 20.2 New project: `ToolEngine.Llm`
+
+```
+src/Llm/ToolEngine.Llm/
+├── Abstractions/
+│   ├── ILlmProvider.cs           CompleteAsync(messages, tools, options, ct) → LlmResponse
+│   ├── IAgentSession.cs          Messages, TokensUsed, AddMessage(), RecordUsage()
+│   └── IProviderRouter.cs        Select(tenantOverride?, toolDescriptor?) → (ILlmProvider, ProviderOptions)
+├── Models/
+│   ├── LlmMessage.cs             Role (User|Assistant|Tool), Content, ToolCall, ToolCallId
+│   ├── LlmToolDefinition.cs      SanitizedName, OriginalFullName, Description, InputSchemaJson
+│   ├── LlmToolCall.cs            Id, ToolName (sanitized), Arguments (JsonElement)
+│   ├── LlmResponse.cs            Content?, ToolCall?, Usage, StopReason, ErrorMessage?
+│   ├── LlmUsage.cs               InputTokens, OutputTokens, TotalTokens, EstimatedCostUsd
+│   └── StopReason.cs             EndTurn | ToolUse | MaxTokens | Error
+├── Providers/
+│   ├── AnthropicLlmProvider.cs   Raw HTTP POST to /v1/messages — official wire format
+│   ├── OpenAiLlmProvider.cs      Raw HTTP POST to /v1/chat/completions
+│   └── OllamaLlmProvider.cs      Extends OpenAiLlmProvider — overrides URL + no auth bearer
+├── Routing/
+│   └── ProviderRouter.cs         Precedence: [LlmProvider] attr > tenant override > config default
+├── Session/
+│   ├── AgentSession.cs           In-memory message list + token accumulator
+│   ├── AgentSessionStore.cs      ICacheProvider-backed; JSON DTO serialization
+│   └── AgentOrchestrator.cs      Core agentic loop
+├── Conversion/
+│   └── ToolSchemaConverter.cs    ToolDescriptor → LlmToolDefinition; WhenToUse embedded
+├── Attributes/
+│   └── LlmProviderAttribute.cs   [LlmProvider("ollama")] on tool class — overrides routing
+├── Options/
+│   ├── LlmOptions.cs             Root "Llm" config
+│   ├── ProviderOptions.cs        Model, ApiKeyEnvVar, BaseUrl, MaxTokens, TimeoutSeconds
+│   ├── RoutingOptions.cs         DefaultProvider, FallbackChain
+│   └── BudgetOptions.cs          MaxTokensPerRequest, MaxTokensPerSession, MaxIterations
+└── Extensions/
+    └── ServiceCollectionExtensions.cs   AddToolLlm(services, configuration)
+```
+
+### 20.3 Providers
+
+#### Anthropic (`claude-opus-4-5` default)
+
+POST `https://api.anthropic.com/v1/messages` with headers `x-api-key` and `anthropic-version: 2023-06-01`.
+
+Tool results are sent as `role: user` with `type: tool_result` content blocks (Anthropic wire format — differs from OpenAI).
+
+#### OpenAI (`gpt-4o` default)
+
+POST `https://api.openai.com/v1/chat/completions` with `Authorization: Bearer {key}`.
+
+#### Ollama (local, zero cost)
+
+Extends `OpenAiLlmProvider`. Overrides base URL to `http://localhost:11434/v1/chat/completions` and omits the `Authorization` header. The Ollama server accepts the OpenAI-compatible `/v1/chat/completions` format natively.
+
+Recommended as the CLI default (`DefaultProvider: ollama`) — no API cost for developer use.
+
+### 20.4 Tool name sanitization
+
+Anthropic and OpenAI reject function names containing dots. `ToolSchemaConverter` sanitizes names at conversion time:
+
+```
+math.calculate  →  math__calculate   (dots replaced with double underscore)
+```
+
+`AgentOrchestrator` maintains a lookup table (`sanitized → original`) per request. When the LLM returns `math__calculate`, it is desanitized back to `math.calculate` before the MediatR command is built.
+
+### 20.5 Agentic loop
+
+```csharp
+// Simplified — see AgentOrchestrator.cs for full implementation
+for (int i = 0; i < budget.MaxIterations; i++)
+{
+    if (session.TokensUsed >= budget.MaxTokensPerSession)
+        return AgentResult.BudgetExceeded(session.SessionId, session.TotalUsage);
+
+    var response = await provider.CompleteAsync(session.Messages, toolDefs, provOpts, ct);
+    session.RecordUsage(response.Usage);
+
+    if (response.StopReason == StopReason.EndTurn)
+        return AgentResult.Ok(response.Content!, session.SessionId, ...);
+
+    if (response.StopReason == StopReason.ToolUse)
+    {
+        // CallerType = AiAgent — NON-NEGOTIABLE, never overridable by the caller
+        var executeCmd = new ExecuteToolCommand<JsonElement, JsonElement>(
+            correlationId, tenantId, userId, toolName, "latest", args,
+            ToolType:               ToolType.Logic,
+            ToolNamespace:          ns,
+            CallerType:             CallerType.AiAgent,
+            GovernanceMetadataJson: JsonSerializer.Serialize(new { provider, model, sessionId }));
+
+        var toolResponse = await mediator.Send(executeCmd, ct); // full 8-behavior pipeline
+        session.AddMessage(LlmMessage.ToolResult(toolCallId, resultJson));
+        // loop continues — LLM summarizes the result
+    }
+}
+return AgentResult.MaxIterations(session.SessionId, session.TotalUsage);
+```
+
+**Circuit breakers:**
+
+| Guard | Mechanism |
+|---|---|
+| Per-iteration token check | `session.TokensUsed >= budget.MaxTokensPerSession` before each LLM call |
+| Iteration limit | `MaxIterations = 10` — prevents O(n²) token explosion in runaway loops |
+| Tool approval gate | High/Critical tools suspend the loop, return `ToolPending` result |
+| Tenant daily budget | Existing `DailyBudgetBehavior` — LLM-initiated calls count against the cap |
+
+### 20.6 Session management
+
+Single-turn `ask` commands use a transient session (not persisted after the call).
+
+Multi-turn `chat` sessions are stored in `ICacheProvider` keyed by `agent:session:{sessionId}`. The session record includes: message history, cumulative token count, and creation timestamp.
+
+When `Cache:Provider = redis`, sessions survive pod restarts and are accessible across all API instances. With `memory` (dev default), sessions are in-process only.
+
+### 20.7 API endpoints
+
+#### Single-turn and multi-turn chat
+
+```http
+POST /agent/chat
+Authorization: Bearer {token}
+X-Llm-Provider: ollama      (optional — overrides routing for this request)
+Content-Type: application/json
+
+{
+  "text":      "What is 6 times 7?",
+  "sessionId": "optional-uuid-for-multi-turn"
+}
+```
+
+**200 Success**
+```json
+{
+  "success":      true,
+  "reply":        "6 times 7 is 42.",
+  "toolInvoked":  "math.calculate",
+  "toolResult":   { "result": 42 },
+  "sessionId":    "f7e6d5c4-...",
+  "usage": {
+    "inputTokens":       88,
+    "outputTokens":      54,
+    "totalTokens":       142,
+    "estimatedCostUsd":  0.0004
+  }
+}
+```
+
+**202 Pending approval** (tool required human approval)
+```json
+{
+  "success":              false,
+  "pendingInvocationId":  "9c112b4a-...",
+  "sessionId":            "f7e6d5c4-..."
+}
+```
+
+**429 Budget exceeded**
+```json
+{
+  "type":   "https://tools.ietf.org/html/rfc7231#section-6.5.29",
+  "title":  "BUDGET_EXCEEDED",
+  "status": 429,
+  "detail": "Session token budget of 32768 exceeded."
+}
+```
+
+#### Streaming chat
+
+```http
+POST /agent/chat/stream
+```
+
+Response: `Content-Type: text/event-stream`
+
+```
+data: {"event":"status","message":"Thinking..."}
+
+data: {"event":"tool_selected","tool":"math.calculate"}
+
+data: {"event":"tool_result","result":{"result":42}}
+
+data: {"event":"reply","text":"6 times 7 is 42.","sessionId":"...","usage":{...}}
+```
+
+### 20.8 Security controls
+
+| Control | Implementation |
+|---|---|
+| API keys never in config | Read from environment variable named by `ProviderOptions.ApiKeyEnvVar` |
+| LLM sees only permitted tools | `_registry.ListAll(tenantId)` — tenant namespace allowlist applied |
+| All tool calls traverse MediatR | `AgentOrchestrator` calls `mediator.Send(executeCmd)` — no bypass |
+| `CallerType = AiAgent` always | Set in `BuildExecuteToolCommand` — not a parameter exposed to callers |
+| Approval gate intact | High/Critical tools suspend the loop — `AgentResult.ToolPending` returned |
+| Prompt injection resistance | System prompt is code-generated; user text is isolated as `role: user` |
+| Session token circuit breaker | Checked before every LLM call, not after |
+| Iteration circuit breaker | `MaxIterations = 10` default |
+| GovernanceMetadataJson | Records `{ provider, model, sessionId }` on every `ToolInvocationRecord` (H5) |
+
+### 20.9 Per-tool LLM routing override
+
+Annotate a tool handler class with `[LlmProvider]` to route all LLM selections of that tool through a specific provider:
+
+```csharp
+// This tool's schema is always submitted to the Ollama provider,
+// regardless of tenant config or global default.
+[LlmProvider("ollama")]
+public sealed class SensitiveAnalysisHandler : LogicToolBase<SensitiveInput, SensitiveOutput>
+{
+    // ...
+}
+```
+
+Routing precedence: `[LlmProvider]` attribute → `Tenant.LlmProviderOverride` → `Llm:DefaultProvider`.
+
+### 20.10 Phase L — file inventory
+
+| File | Description |
+|---|---|
+| `src/Llm/ToolEngine.Llm/` (new project) | All LLM abstractions, providers, orchestrator |
+| `src/Application/.../Commands/AgentChatCommand.cs` | New MediatR command |
+| `src/Application/.../Handlers/AgentChatHandler.cs` | Handler — delegates to `AgentOrchestrator` |
+| `src/Hosts/ToolEngine.Api/Endpoints/AgentEndpoints.cs` | `/agent/chat` and `/agent/chat/stream` |
+| `src/Hosts/ToolEngine.Api/appsettings.json` | Added `"Llm"` section |
+| `src/Hosts/ToolEngine.Cli/Repl/ReplLoop.cs` | Added `ask`, `chat`, `chat end` REPL commands |
+| `src/Hosts/ToolEngine.Cli/appsettings.json` | Added `"Llm"` section (`DefaultProvider: ollama`) |
+| `tests/ToolEngine.Llm.Tests/` (new project) | 30 unit tests — orchestrator, router, converter, session |
+| `tests/ToolEngine.Integration.Tests/Agent/AgentChatTests.cs` | 4 integration tests — CallerType, GovernanceMetadataJson, pipeline end-to-end |
 
 ---
 

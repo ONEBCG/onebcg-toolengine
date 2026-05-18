@@ -32,6 +32,7 @@
     <ProjectReference Include="..\..\Tools\ToolEngine.Tools.Executor\ToolEngine.Tools.Executor.csproj" />
     <ProjectReference Include="..\..\Application\ToolEngine.Application\ToolEngine.Application.csproj" />
     <ProjectReference Include="..\..\Infrastructure\ToolEngine.Infrastructure\ToolEngine.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\Llm\ToolEngine.Llm\ToolEngine.Llm.csproj" />
   </ItemGroup>
 
 </Project>

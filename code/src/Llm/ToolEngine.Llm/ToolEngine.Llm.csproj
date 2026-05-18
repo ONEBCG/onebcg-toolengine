@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="MediatR" Version="12.*" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.*" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="8.*" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.*" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\Core\ToolEngine.Core.Abstractions\ToolEngine.Core.Abstractions.csproj" />
+    <ProjectReference Include="..\..\Core\ToolEngine.Core.Domain\ToolEngine.Core.Domain.csproj" />
+    <ProjectReference Include="..\..\Tools\ToolEngine.Tools.Abstractions\ToolEngine.Tools.Abstractions.csproj" />
+    <ProjectReference Include="..\..\Tools\ToolEngine.Tools.Registry\ToolEngine.Tools.Registry.csproj" />
+    <ProjectReference Include="..\..\Application\ToolEngine.Application\ToolEngine.Application.csproj" />
+  </ItemGroup>
+</Project>

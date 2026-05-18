@@ -6,6 +6,7 @@ export const TOOL_TYPE_LABELS: Record<number, string> = {
 }
 
 export interface ToolMetadata {
+  namespace: string
   name: string
   version: string
   description: string
@@ -41,15 +42,31 @@ export interface ToolResponse {
   timestamp: string
 }
 
+export interface AgentUsage {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  estimatedCostUsd: number
+}
+
+export interface AgentChatResponse {
+  reply: string
+  toolInvoked: string | null
+  toolResult: unknown
+  sessionId: string
+  usage: AgentUsage
+}
+
+// Keys match tool name (e.g. "calculate", "current")
 export const EXAMPLE_INPUTS: Record<string, string> = {
-  calculator: JSON.stringify(
+  calculate: JSON.stringify(
     { leftOperand: 10, rightOperand: 3, operator: 'add' },
     null, 2
   ),
-  weather: JSON.stringify({ city: 'London' }, null, 2),
+  current: JSON.stringify({ city: 'London' }, null, 2),
   'user-lookup': JSON.stringify(
     { userId: '11111111-0000-0000-0000-000000000001' },
     null, 2
   ),
-  'weather-report': JSON.stringify({ city: 'Tokyo' }, null, 2),
+  report: JSON.stringify({ city: 'Tokyo' }, null, 2),
 }
