@@ -22,11 +22,17 @@ internal sealed class CachedTenantReadRepository : IReadRepository<Tenant, strin
 
     public async Task<Tenant?> GetByIdAsync(string id, CancellationToken ct = default)
     {
-        if (_cache.TryGetValue(id, out var cached))
+        // H6 — normalise key to lowercase: Tenant.Create stores IDs as lowercase,
+        // but a JWT with "Acme" would produce a cache key that misses the "acme" entry
+        // even though the dictionary is OrdinalIgnoreCase for reads.
+        // Normalising at write-time ensures all lookups hit the same slot.
+        var key = id.ToLowerInvariant();
+
+        if (_cache.TryGetValue(key, out var cached))
             return cached;
 
-        var tenant = await _inner.GetByIdAsync(id, ct);
-        _cache[id] = tenant;
+        var tenant = await _inner.GetByIdAsync(key, ct);
+        _cache[key] = tenant;
         return tenant;
     }
 

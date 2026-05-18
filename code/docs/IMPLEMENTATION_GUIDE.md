@@ -26,6 +26,8 @@
 18. [Observability — Phase G](#18-observability--phase-g)
 19. [Compliance — Phase H](#19-compliance--phase-h)
 20. [LLM Agent Layer — Phase L](#20-llm-agent-layer--phase-l)
+21. [Frontend UI — React/TypeScript/Vite](#21-frontend-ui--reacttypescriptvite)
+22. [Runtime Hardening — Phase M](#22-runtime-hardening--phase-m)
 
 ---
 
@@ -126,7 +128,7 @@ Result<string> upper = result.Bind(t =>
 Structured error with a `SCREAMING_SNAKE_CASE` code and human-readable description.
 
 ```csharp
-Error.NotFound("Tenant", "acme-corp")
+Error.NotFound("Tenant", "onebcg-default-tenant")
 Error.Validation("TenantId cannot be empty.")
 Error.Unauthorized("Tenant 'acme' is inactive.")
 Error.Conflict("Approval is not in Pending status.")
@@ -143,7 +145,7 @@ Single entry and exit contracts for every tool invocation.
 // Request
 var request = new ToolRequest<MyInput>(
     correlationId: Guid.NewGuid(),
-    tenantId:      "acme-corp",
+    tenantId:      "onebcg-default-tenant",
     toolName:      "calculate",
     toolVersion:   "v1",
     input:         new MyInput(A: 10, B: 5),
@@ -177,7 +179,7 @@ Durable state created when a tool execution is suspended pending human approval.
 ### 3.5 Tenant entity
 
 ```csharp
-var tenant = Tenant.Create("acme-corp", "Acme Corp", "admin@acme.com", clock).Value;
+var tenant = Tenant.Create("onebcg-default-tenant", "Acme Corp", "admin@acme.com", clock).Value;
 
 // Restrict to specific namespaces (empty list = all allowed)
 tenant.AllowNamespace("math");
@@ -274,10 +276,10 @@ registry.Register<CalculateHandler>("v1");
 registry.Register<CalculateHandler>("v2");   // multiple versions supported
 
 // Resolve by namespace + name + version (tenant-scoped)
-Result<ToolDescriptor> descriptor = registry.Resolve("math", "calculate", "v1", "acme-corp");
+Result<ToolDescriptor> descriptor = registry.Resolve("math", "calculate", "v1", "onebcg-default-tenant");
 
 // List all registered tools (optionally filtered by tenant)
-IReadOnlyList<ToolDescriptor> all = registry.ListAll("acme-corp");
+IReadOnlyList<ToolDescriptor> all = registry.ListAll("onebcg-default-tenant");
 
 // List versions for a specific tool
 IReadOnlyList<string> versions = registry.GetVersions("math", "calculate");
@@ -291,7 +293,7 @@ Result<ToolDiscoveryDescriptor> desc = discovery.Resolve("math", "calculate", "v
 
 // Semantic search — word-overlap scoring on Description + WhenToUse
 IReadOnlyList<ToolDiscoveryDescriptor> results =
-    await discovery.SearchAsync("add two numbers", "acme-corp", topK: 3);
+    await discovery.SearchAsync("add two numbers", "onebcg-default-tenant", topK: 3);
 
 // ToolDiscoveryDescriptor carries approval metadata
 Console.WriteLine(desc.Value.NeedsApproval);   // true / false
@@ -309,12 +311,27 @@ Console.WriteLine(desc.Value.ApprovalReason);  // "Modifies live HR records..."
 var result = await executor.ExecuteAsync<MyInput, MyOutput>(
     new ToolRequest<MyInput>(
         correlationId: Guid.NewGuid(),
-        tenantId:      "acme-corp",
+        tenantId:      "onebcg-default-tenant",
         toolName:      "calculate",
         toolVersion:   "v1",
         input:         new MyInput(A: 10, B: 5),
         toolNamespace: "math"));
 ```
+
+### 6.3 DI scope per execution
+
+`ToolExecutor` creates a fresh `AsyncScope` per execution via `IServiceScopeFactory`. This is required because tool handlers may depend on scoped services (`IUnitOfWork`, `AppDbContext`) which cannot be resolved from the root `IServiceProvider`.
+
+```csharp
+// Correct — async scope per invocation
+await using var scope = _scopeFactory.CreateAsyncScope();
+var handler = scope.ServiceProvider.GetService(resolve.Value.HandlerType);
+```
+
+Key points:
+- `IServiceScopeFactory` is injected (not `IServiceProvider`) — resolving scoped services from the root provider throws `InvalidOperationException`.
+- `CreateAsyncScope()` + `await using` ensures `DisposeAsync()` is called on services that implement `IAsyncDisposable` only (e.g. `UnitOfWork`). Using synchronous `using` with `CreateScope()` will throw at runtime for such services.
+- The scope is disposed after `ExecuteAsync` returns, releasing the `DbContext` and `UnitOfWork` resources cleanly.
 
 ### 6.2 ToolPlanExecutor — multi-step execution
 
@@ -332,7 +349,7 @@ var plan = new ToolPlan(
         new ToolStep("step-3", "report", "generate","v1", inputC)
     ]);
 
-var results = await planExecutor.ExecuteAsync(plan, "acme-corp", ct);
+var results = await planExecutor.ExecuteAsync(plan, "onebcg-default-tenant", ct);
 // If step-2 fails, step-3 is skipped immediately.
 ```
 
@@ -382,7 +399,7 @@ The single CQRS command used by all callers.
 ```csharp
 var command = new ExecuteToolCommand<JsonElement, JsonElement>(
     CorrelationId:    Guid.NewGuid(),
-    TenantId:         "acme-corp",
+    TenantId:         "onebcg-default-tenant",
     UserId:           "user-123",
     ToolName:         "calculate",
     ToolVersion:      "v1",
@@ -468,7 +485,7 @@ var single  = await readRepo.GetByIdAsync(id, ct);
 var all     = await readRepo.ListAllAsync(ct);
 var filtered = await readRepo.ListAsync(
     new LambdaSpecification<PendingApproval>(
-        a => a.TenantId == "acme-corp" && a.Status == ApprovalStatus.Pending),
+        a => a.TenantId == "onebcg-default-tenant" && a.Status == ApprovalStatus.Pending),
     ct);
 ```
 
@@ -538,7 +555,7 @@ Tenant channel overrides via config:
 "Approval": {
   "DefaultChannel": "Dashboard",
   "TenantChannelOverrides": {
-    "acme-corp": "Webhook",
+    "onebcg-default-tenant": "Webhook",
     "beta-tenant": "EmailMagicLink"
   }
 }
@@ -591,7 +608,7 @@ POSTs a JSON payload to `ApprovalOptions.WebhookUrl`:
   "toolFullName":  "hr.update-employee",
   "risk":          "High",
   "reason":        "Modifies live HR records.",
-  "tenantId":      "acme-corp",
+  "tenantId":      "onebcg-default-tenant",
   "requestedBy":   "user-123",
   "expiresAt":     "2026-05-18T14:30:00Z",
   "approveUrl":    "https://app.onebcg.com/approvals/{token}/decide?action=approve",
@@ -638,7 +655,25 @@ All invocation endpoints require a JWT bearer token. Claims expected:
 | `tenant_id` | `TenantId` in commands |
 | `sub` (NameIdentifier) | `UserId` in commands |
 
-Dev token generation: `GET /dev/token?tenantId=acme-corp&userId=user-123` (development environment only).
+Dev token generation: `GET /dev/token?tenantId=onebcg-default-tenant&userId=user-123` (development environment only).
+
+### 10.0 Startup — schema and dev tenant seed
+
+On every startup in **development**, `Program.cs` drops and recreates the SQLite schema and seeds a default tenant:
+
+```csharp
+await db.Database.EnsureDeletedAsync();   // drop stale schema
+await db.Database.EnsureCreatedAsync();   // create from current model
+
+var devTenant = Tenant.Create("onebcg-default-tenant", "ONE BCG Default Tenant", "dev-seed", clock).Value;
+devTenant.AllowNamespace("*");            // unrestricted namespace access
+db.Set<Tenant>().Add(devTenant);
+await db.SaveChangesAsync();
+```
+
+`EnsureDeletedAsync` is intentional — it prevents stale-schema errors (e.g. `no such table: OutboxMessages`) when new entities are added between runs. Dev data is ephemeral.
+
+In **production**, `MigrateAsync()` is called instead and no tenant is seeded — tenants are provisioned via the API.
 
 ### 10.2 Endpoints
 
@@ -809,6 +844,30 @@ data: {"correlationId":"...","content":"","index":2,"isFinal":true}
 ---
 
 ## 11. CLI Host
+
+### 11.0 Startup — schema and dev tenant seed
+
+The CLI host mirrors the API startup pattern. On every run, it drops and recreates the local SQLite database and seeds the default tenant:
+
+```csharp
+await using (var scope = host.Services.CreateAsyncScope())
+{
+    var db = scope.ServiceProvider
+                  .GetRequiredService<AppDbContext>();
+    await db.Database.EnsureDeletedAsync();
+    await db.Database.EnsureCreatedAsync();
+
+    var clock     = scope.ServiceProvider.GetRequiredService<IDateTimeProvider>();
+    var devTenant = Tenant.Create("onebcg-default-tenant", "ONE BCG Default Tenant", "cli-seed", clock).Value;
+    devTenant.AllowNamespace("*");
+    db.Set<Tenant>().Add(devTenant);
+    await db.SaveChangesAsync();
+}
+```
+
+`CreateAsyncScope()` + `await using` are required because `IUnitOfWork` implements `IAsyncDisposable` only. The synchronous `using (host.Services.CreateScope())` pattern throws `InvalidOperationException` at dispose time for such services.
+
+The database file (`toolengine-cli.db`) is recreated on every startup — CLI data is intentionally ephemeral.
 
 ### 11.1 Starting the REPL
 
@@ -1063,7 +1122,7 @@ Recommended: use exponential back-off with a maximum interval of 60 seconds. Do 
     "BaseUrl":               "https://app.onebcg.com",
     "WebhookUrl":            "https://hooks.slack.com/services/...",
     "TenantChannelOverrides": {
-      "acme-corp":    "Webhook",
+      "onebcg-default-tenant":    "Webhook",
       "beta-tenant":  "EmailMagicLink"
     }
   },
@@ -1176,7 +1235,7 @@ builder.Services.AddToolInfrastructure(
     opt => opt.UseNpgsql(connectionString));
 ```
 
-`EnsureCreated()` is called in development only. For production, use EF Core migrations:
+`EnsureDeletedAsync()` + `EnsureCreatedAsync()` are called in development only — they drop and rebuild the schema on every startup so stale schemas never block development. For production, use EF Core migrations:
 
 ```bash
 dotnet ef migrations add InitialCreate \
@@ -1210,16 +1269,16 @@ services.AddSingleton<IEmailSender, SmtpEmailSender>();
 
 ### Loop detection — distributed deployments
 
-`LoopDetectionBehavior` uses an in-process `ConcurrentDictionary`. In a horizontally scaled deployment, replace with a distributed cache:
+`LoopDetectionBehavior` uses `ICacheProvider.IncrementAsync` for its per-correlation counter. In single-node or development deployments, the in-process memory provider is used. For horizontally scaled production deployments, configure Redis:
 
-```csharp
-// Redis-backed implementation (example)
-public sealed class RedisLoopDetectionBehavior<TRequest, TResponse>
-    : IPipelineBehavior<TRequest, TResponse>
+```json
 {
-    // Use IConnectionMultiplexer with INCR + EXPIRE per key
+  "Cache": { "Provider": "redis" },
+  "ConnectionStrings": { "Redis": "your-redis-host:6379" }
 }
 ```
+
+With Redis, the increment counter is shared across all pods and a sliding TTL prevents unbounded accumulation. The memory provider is never safe for multi-pod deployments.
 
 ### Health checks
 
@@ -1559,7 +1618,7 @@ On retry with the same key: returns `202` pointing to the same `PendingApproval`
 ```csharp
 var page = await approvalRepo.PagedListAsync(
     new LambdaSpecification<PendingApproval>(
-        a => a.TenantId == "acme-corp" && a.Status == ApprovalStatus.Pending),
+        a => a.TenantId == "onebcg-default-tenant" && a.Status == ApprovalStatus.Pending),
     pageNumber: 2,
     pageSize:   20,
     ct);
@@ -2080,6 +2139,252 @@ Routing precedence: `[LlmProvider]` attribute → `Tenant.LlmProviderOverride` �
 | `src/Hosts/ToolEngine.Cli/appsettings.json` | Added `"Llm"` section (`DefaultProvider: ollama`) |
 | `tests/ToolEngine.Llm.Tests/` (new project) | 30 unit tests — orchestrator, router, converter, session |
 | `tests/ToolEngine.Integration.Tests/Agent/AgentChatTests.cs` | 4 integration tests — CallerType, GovernanceMetadataJson, pipeline end-to-end |
+
+---
+
+## 21. Frontend UI — React/TypeScript/Vite
+
+A browser-based developer console ships alongside the REST API. It provides tool browsing, invocation, and response inspection without requiring Swagger or curl.
+
+### 21.1 Tech stack
+
+| Concern | Choice |
+|---|---|
+| Framework | React 18 + TypeScript |
+| Build tool | Vite |
+| State | Local component state (no Redux) |
+| Styling | CSS variables with ONE BCG brand tokens |
+| API layer | `fetch` wrapper in `src/api.ts` |
+
+### 21.2 Brand tokens
+
+```css
+:root {
+  --red:        #CC2222;
+  --dark-grey:  #595959;
+  --near-black: #222222;
+  --yellow:     #FFD700;
+}
+```
+
+Font: Arsenal (Google Fonts). No bold is applied anywhere in the UI.
+
+### 21.3 Project structure
+
+```
+src/frontend/
+├── src/
+│   ├── api.ts              — fetch wrappers: fetchDevToken, fetchTools, invokeTool, fetchHealth
+│   ├── types.ts            — ToolDescriptor (flat shape matching ToolSummaryResponse)
+│   ├── App.tsx             — root layout: header, tab bar, main panel
+│   ├── App.css             — global styles, CSS variables, layout
+│   └── components/
+│       ├── ToolList.tsx    — tool browser sidebar (name, version, type badge)
+│       ├── ToolInvoker.tsx — JSON input editor + invoke button + result panel
+│       └── ResponsePanel.tsx — renders success data, metrics, and errors
+└── index.html
+```
+
+### 21.4 `ToolDescriptor` — flat shape
+
+`GET /tools` returns an array of `ToolSummaryResponse` objects. The frontend `ToolDescriptor` interface must match this flat shape exactly:
+
+```typescript
+export interface ToolDescriptor {
+  fullName:    string
+  namespace:   string
+  name:        string
+  version:     string
+  description: string
+  type:        number
+  isEnabled:   boolean
+  tenantId:    string | null
+  inputSchema: Record<string, unknown>
+  outputSchema: Record<string, unknown>
+}
+```
+
+There is no nested `metadata` sub-object. All components reference `tool.name`, `tool.version`, `tool.namespace` etc. directly.
+
+### 21.5 `api.ts` — invocation error handling
+
+`invokeTool` checks `res.ok` before parsing the response body. Without this guard, a `ProblemDetails` error JSON is forwarded to `ResponsePanel` which then crashes accessing `metrics.duration` on `undefined`.
+
+```typescript
+export async function invokeTool(
+  ns: string, name: string, version: string,
+  input: unknown, token: string
+): Promise<ToolInvocationResult> {
+  const res = await fetch(`${BASE}/tools/${ns}/${name}/${version}/invoke`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    body:    JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { detail?: string; title?: string }
+    throw new Error(err.detail ?? err.title ?? `Invocation failed: HTTP ${res.status}`)
+  }
+  return res.json()
+}
+```
+
+### 21.6 Swagger link
+
+The header includes an "API Docs ↗" link that opens Swagger UI in a new tab. It is styled to match the dark header (grey border at rest, white on hover):
+
+```tsx
+<a href={`${BASE}/swagger`} target="_blank" rel="noopener noreferrer" className="swagger-link">
+  API Docs ↗
+</a>
+```
+
+`BASE` is exported from `api.ts` so `App.tsx` can reference it without duplicating the base URL string.
+
+### 21.7 Development setup
+
+```bash
+cd src/frontend
+npm install
+npm run dev       # Vite dev server: http://localhost:5173
+                  # Proxies API calls to: http://localhost:5174
+```
+
+The frontend auto-fetches a dev JWT from `GET /dev/token` on load. The token is bound to `onebcg-default-tenant`.
+
+---
+
+## 22. Runtime Hardening — Phase M
+
+Phase M documents runtime defects discovered and resolved during integration testing and developer usage of the running system. All items are resolved and the codebase builds clean.
+
+### M1 — DI scope lifetime mismatch in `ToolExecutor` (Critical)
+
+**Symptom:** `Cannot resolve 'UserLookupTool' from root provider because it requires scoped service 'IUnitOfWork'` — every tool invocation returns HTTP 500.
+
+**Root cause:** `ToolExecutor` was injected with `IServiceProvider` and called `GetService` directly on the root container. Scoped services (`IUnitOfWork`, `AppDbContext`) cannot be resolved from the root provider — .NET DI throws `InvalidOperationException`.
+
+**Fix:** Changed `ToolExecutor` constructor to accept `IServiceScopeFactory`. A child scope is created per execution:
+
+```csharp
+// Before
+private readonly IServiceProvider _services;
+var handlerObj = _services.GetService(resolve.Value.HandlerType);
+
+// After
+private readonly IServiceScopeFactory _scopeFactory;
+await using var scope = _scopeFactory.CreateAsyncScope();
+var handlerObj = scope.ServiceProvider.GetService(resolve.Value.HandlerType);
+```
+
+**File:** `src/Tools/ToolEngine.Tools.Executor/ToolExecutor.cs`
+
+---
+
+### M2 — `IAsyncDisposable`-only `UnitOfWork` throws on sync dispose (Critical)
+
+**Symptom:** `'UnitOfWork' type only implements IAsyncDisposable. Use DisposeAsync to dispose the container.` — thrown at the end of every tool execution.
+
+**Root cause:** First iteration of the M1 fix used `using var scope = _scopeFactory.CreateScope()`. At the end of the `using` block, the runtime calls synchronous `Dispose()` on the scope. The scope attempts to sync-dispose `UnitOfWork`, which only implements `IAsyncDisposable` — this throws.
+
+**Fix:** Changed `CreateScope()` to `CreateAsyncScope()` and `using` to `await using`. `DisposeAsync()` is now called correctly.
+
+```csharp
+await using var scope = _scopeFactory.CreateAsyncScope();
+```
+
+**File:** `src/Tools/ToolEngine.Tools.Executor/ToolExecutor.cs`
+
+---
+
+### M3 — Stale SQLite schema causes CLI startup crash (High)
+
+**Symptom:** `SQLite Error 1: 'no such table: OutboxMessages'` — CLI process exits immediately.
+
+**Root cause:** The CLI's `Program.cs` called only `db.Database.EnsureCreated()`. When the `OutboxMessages` entity was added in Phase F7, the existing `toolengine-cli.db` file was never dropped. `EnsureCreated` is a no-op when the file already exists — the schema was never updated.
+
+**Fix:** Changed to `EnsureDeletedAsync` + `EnsureCreatedAsync` on every startup. CLI data is intentionally ephemeral; the file is always rebuilt from the current model.
+
+**File:** `src/Hosts/ToolEngine.Cli/Program.cs`
+
+---
+
+### M4 — No dev tenant seeded in CLI or API host (High)
+
+**Symptom:** `Tenant 'onebcg-default-tenant' not found` — `TenantAuthorizationBehavior` returns 401 on every invocation immediately after startup.
+
+**Root cause:** Neither host seeded a tenant record after schema creation. `TenantAuthorizationBehavior` queries the DB for the JWT `tenant_id` claim; if no matching row exists, it returns 401 regardless of tool or input.
+
+**Fix:** Added deterministic seed in both `Program.cs` files immediately after `EnsureCreatedAsync`:
+
+```csharp
+var devTenant = Tenant.Create("onebcg-default-tenant", "ONE BCG Default Tenant", "dev-seed", clock).Value;
+devTenant.AllowNamespace("*");
+db.Set<Tenant>().Add(devTenant);
+await db.SaveChangesAsync();
+```
+
+**Files:** `src/Hosts/ToolEngine.Api/Program.cs`, `src/Hosts/ToolEngine.Cli/Program.cs`
+
+---
+
+### M5 — Default tenant renamed from `acme-corp` to `onebcg-default-tenant` (Operational)
+
+**Change:** All hardcoded references to `"acme-corp"` changed to `"onebcg-default-tenant"` to align with ONE BCG brand and avoid confusion with sample data.
+
+**Files affected:**
+- `src/Hosts/ToolEngine.Api/Endpoints/DevEndpoints.cs` — default `tenant` query parameter
+- `src/Hosts/ToolEngine.Api/Program.cs` — seed tenant ID and display name
+- `src/Hosts/ToolEngine.Cli/Program.cs` — seed tenant ID and display name
+- `src/frontend/src/App.tsx` — header tenant label
+
+---
+
+### M6 — Frontend `ToolDescriptor` type mismatch (High)
+
+**Symptom:** Tools tab displayed four blank entries with no text; clicking any entry did nothing.
+
+**Root cause:** A previous session changed `GET /tools` to return `ToolSummaryResponse` (flat DTO) instead of the original nested `ToolDescriptor`. The frontend `types.ts` still declared a nested `ToolDescriptor` with a `metadata` sub-object. `tool.metadata.name` returned `undefined` everywhere — buttons rendered with no text and appeared unclickable.
+
+**Fix:** Rewrote `types.ts` `ToolDescriptor` interface to match the flat API shape. Updated all references in `ToolList.tsx` and `ToolInvoker.tsx` from `tool.metadata.xxx` to `tool.xxx`.
+
+**Files:** `src/frontend/src/types.ts`, `src/frontend/src/components/ToolList.tsx`, `src/frontend/src/components/ToolInvoker.tsx`
+
+---
+
+### M7 — Invoke button silent crash on error response (High)
+
+**Symptom:** Clicking Invoke with a valid tool returned no result — the UI froze silently. Console showed a TypeError.
+
+**Root cause:** `invokeTool` in `api.ts` had no `res.ok` guard. On a 401/403/500, `fetch` resolves successfully with the error response body. `ResponsePanel` received a `ProblemDetails` object instead of a `ToolInvocationResult` and crashed accessing `metrics.duration` on `undefined`.
+
+**Fix:** Added `res.ok` check — on failure, the error `detail` or `title` from `ProblemDetails` is surfaced as a thrown `Error`, which is caught and displayed cleanly in the UI.
+
+**File:** `src/frontend/src/api.ts`
+
+---
+
+### M8 — Swagger link added to UI header (Enhancement)
+
+**Change:** Added "API Docs ↗" anchor to the application header, opening Swagger UI (`/swagger`) in a new tab. `BASE` exported from `api.ts` to avoid duplicating the API base URL.
+
+**Files:** `src/frontend/src/App.tsx`, `src/frontend/src/App.css`, `src/frontend/src/api.ts`
+
+---
+
+### Phase M — file summary
+
+| File | Changes |
+|---|---|
+| `src/Tools/ToolEngine.Tools.Executor/ToolExecutor.cs` | M1, M2 — `IServiceScopeFactory` + `CreateAsyncScope` |
+| `src/Hosts/ToolEngine.Api/Program.cs` | M3, M4 — `EnsureDeletedAsync` + seed; M5 — tenant rename |
+| `src/Hosts/ToolEngine.Cli/Program.cs` | M3, M4 — `EnsureDeletedAsync` + seed + `CreateAsyncScope`; M5 |
+| `src/Hosts/ToolEngine.Api/Endpoints/DevEndpoints.cs` | M5 — default tenant rename |
+| `src/frontend/src/types.ts` | M6 — flat `ToolDescriptor` |
+| `src/frontend/src/components/ToolList.tsx` | M6 — remove `metadata.` prefix |
+| `src/frontend/src/components/ToolInvoker.tsx` | M6 — remove `metadata.` prefix |
+| `src/frontend/src/api.ts` | M7 — `res.ok` guard; M8 — export `BASE` |
+| `src/frontend/src/App.tsx` | M5 — tenant label; M8 — Swagger link |
+| `src/frontend/src/App.css` | M8 — `.swagger-link` styles |
 
 ---
 

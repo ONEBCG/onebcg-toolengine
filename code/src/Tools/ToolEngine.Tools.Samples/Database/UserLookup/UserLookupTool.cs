@@ -54,7 +54,7 @@ public sealed class UserLookupTool
                 new UserLookupInput(Guid.Parse("11111111-0000-0000-0000-000000000001")),
                 new UserLookupOutput(
                     Guid.Parse("11111111-0000-0000-0000-000000000001"),
-                    "alice@acme-corp.com", "Alice Smith", "acme-corp", true))
+                    "alice@onebcg-default-tenant.com", "Alice Smith", "onebcg-default-tenant", true))
         ],
         new ToolParameter("userId", "string", "UUID of the user", Format: "uuid"));
 

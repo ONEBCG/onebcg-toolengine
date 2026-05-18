@@ -7,5 +7,10 @@ public enum ToolStatus
     Succeeded,
     Failed,
     Cancelled,
-    TimedOut
+    TimedOut,
+    /// <summary>
+    /// Execution is paused awaiting human approval (ApprovalBehavior returned Suspend).
+    /// The invocation record remains open until the approval is decided and the tool re-runs.
+    /// </summary>
+    Suspended
 }

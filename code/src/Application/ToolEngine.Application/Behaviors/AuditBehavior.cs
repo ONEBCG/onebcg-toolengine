@@ -122,8 +122,10 @@ public sealed class AuditBehavior<TRequest, TResponse>
             }
             else if (toolResponse.PendingInvocationId.HasValue)
             {
-                // Suspended — approval pending. Not a failure.
-                record.MarkFailed(toolResponse.Error!, _clock);
+                // C3 — Suspended: awaiting human approval. Must NOT be persisted as Failed.
+                // MarkSuspended leaves CompletedAt null; the record will be updated to
+                // Succeeded/Failed when the approval resolves and the tool re-executes.
+                record.MarkSuspended();
                 status = "suspended";
                 activity?.SetTag("approval.invocationId", toolResponse.PendingInvocationId.ToString());
                 // H1 — Suspended event.

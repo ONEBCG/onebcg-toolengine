@@ -73,24 +73,43 @@ public class OpenAiLlmProvider : ILlmProvider
                 return new LlmResponse(StopReason.Error, null, null, LlmUsage.Zero, $"{ProviderName} API error: {response.StatusCode}");
             }
 
-            using var doc   = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
-            var root         = doc.RootElement;
-            var choices      = root.GetProperty("choices");
-            var choice       = choices[0];
-            var finishReason = choice.GetProperty("finish_reason").GetString();
-            var message      = choice.GetProperty("message");
-            var usage        = ParseOpenAiUsage(root);
+            using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+            var root  = doc.RootElement;
+            var usage = ParseOpenAiUsage(root);
 
-            if (finishReason == "tool_calls")
+            // H13 — Guard against empty or missing choices array; observed in rare API responses.
+            if (!root.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
             {
-                var toolCalls = message.GetProperty("tool_calls");
-                var first     = toolCalls[0];
-                var id        = first.GetProperty("id").GetString()!;
-                var fn        = first.GetProperty("function");
-                var name      = fn.GetProperty("name").GetString()!;
-                var argsJson  = fn.GetProperty("arguments").GetString() ?? "{}";
-                var args      = JsonDocument.Parse(argsJson).RootElement;
-                return new LlmResponse(StopReason.ToolUse, null, new LlmToolCall(id, name, args.Clone()), usage);
+                _logger.LogError("{Provider} response has no choices. Raw: {Body}", ProviderName, root.GetRawText());
+                return new LlmResponse(StopReason.Error, null, null, usage,
+                    $"{ProviderName} response returned no choices.");
+            }
+
+            var choice = choices[0];
+
+            if (!choice.TryGetProperty("finish_reason", out var finishReasonProp) ||
+                !choice.TryGetProperty("message",       out var message))
+                return new LlmResponse(StopReason.Error, null, null, usage,
+                    $"{ProviderName} response choice missing finish_reason or message.");
+
+            var finishReason = finishReasonProp.GetString();
+
+            if (finishReason == "tool_calls" &&
+                message.TryGetProperty("tool_calls", out var toolCalls) &&
+                toolCalls.GetArrayLength() > 0)
+            {
+                var first = toolCalls[0];
+                if (first.TryGetProperty("id",       out var idProp) &&
+                    first.TryGetProperty("function", out var fn)     &&
+                    fn.TryGetProperty("name",        out var nameProp))
+                {
+                    var argsJson = fn.TryGetProperty("arguments", out var argsProp)
+                        ? argsProp.GetString() ?? "{}"
+                        : "{}";
+                    var args = JsonDocument.Parse(argsJson).RootElement;
+                    return new LlmResponse(StopReason.ToolUse, null,
+                        new LlmToolCall(idProp.GetString()!, nameProp.GetString()!, args.Clone()), usage);
+                }
             }
 
             var text = message.TryGetProperty("content", out var c) ? c.GetString() : null;

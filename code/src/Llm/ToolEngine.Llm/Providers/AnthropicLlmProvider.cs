@@ -77,22 +77,40 @@ public sealed class AnthropicLlmProvider : ILlmProvider
             }
 
             using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
-            var root       = doc.RootElement;
-            var stopReason = root.GetProperty("stop_reason").GetString();
-            var usage      = ParseAnthropicUsage(root);
+            var root  = doc.RootElement;
+            var usage = ParseAnthropicUsage(root);
+
+            // H12 — Anthropic occasionally returns HTTP 200 with an error envelope
+            // (e.g. overloaded_error). Guard defensively rather than letting GetProperty throw.
+            if (!root.TryGetProperty("stop_reason", out var stopReasonProp))
+            {
+                var errMsg = root.TryGetProperty("error", out var errProp)
+                    ? errProp.TryGetProperty("message", out var msg) ? msg.GetString() : null
+                    : null;
+                _logger.LogError("Anthropic response missing stop_reason. Raw: {Body}", root.GetRawText());
+                return new LlmResponse(StopReason.Error, null, null, usage,
+                    $"Anthropic unexpected response: {errMsg ?? "missing stop_reason"}");
+            }
+
+            var stopReason = stopReasonProp.GetString();
 
             if (stopReason == "tool_use")
             {
-                var content = root.GetProperty("content");
+                if (!root.TryGetProperty("content", out var content))
+                    return new LlmResponse(StopReason.Error, null, null, usage, "Anthropic tool_use response missing content.");
+
                 foreach (var item in content.EnumerateArray())
                 {
-                    if (item.GetProperty("type").GetString() == "tool_use")
-                    {
-                        var id        = item.GetProperty("id").GetString()!;
-                        var name      = item.GetProperty("name").GetString()!;
-                        var inputElem = item.GetProperty("input");
-                        return new LlmResponse(StopReason.ToolUse, null, new LlmToolCall(id, name, inputElem.Clone()), usage);
-                    }
+                    if (!item.TryGetProperty("type", out var typeProp)) continue;
+                    if (typeProp.GetString() != "tool_use") continue;
+
+                    if (!item.TryGetProperty("id",    out var idProp)   ||
+                        !item.TryGetProperty("name",  out var nameProp) ||
+                        !item.TryGetProperty("input", out var inputProp))
+                        continue;
+
+                    return new LlmResponse(StopReason.ToolUse, null,
+                        new LlmToolCall(idProp.GetString()!, nameProp.GetString()!, inputProp.Clone()), usage);
                 }
             }
 

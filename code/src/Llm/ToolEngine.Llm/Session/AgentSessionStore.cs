@@ -1,5 +1,6 @@
 namespace ToolEngine.Llm.Session;
 
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ToolEngine.Core.Abstractions.Common;
@@ -13,6 +14,13 @@ public sealed class AgentSessionStore : IAgentSessionStore
 
     private readonly ICacheProvider             _cache;
     private readonly ILogger<AgentSessionStore> _logger;
+
+    // H15 — per-session semaphores prevent concurrent requests from overwriting each
+    // other's message history (last-writer-wins). SemaphoreSlim is Singleton-safe because
+    // AgentSessionStore itself is registered as Singleton.
+    // NOTE: these locks are in-process only. For multi-instance deployments, replace
+    // with a Redis distributed lock (e.g. Redlock via StackExchange.Redis).
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _sessionLocks = new();
 
     public AgentSessionStore(ICacheProvider cache, ILogger<AgentSessionStore> logger)
     {
@@ -48,7 +56,27 @@ public sealed class AgentSessionStore : IAgentSessionStore
     public Task DeleteAsync(string sessionId, CancellationToken ct) =>
         _cache.RemoveAsync(CacheKey(sessionId), ct);
 
+    public async Task<IDisposable> AcquireSessionLockAsync(string sessionId, CancellationToken ct)
+    {
+        var sem = _sessionLocks.GetOrAdd(sessionId, _ => new SemaphoreSlim(1, 1));
+        await sem.WaitAsync(ct);
+        return new SemaphoreRelease(sem);
+    }
+
     private static string CacheKey(string sessionId) => $"agent-session:{sessionId}";
+
+    private sealed class SemaphoreRelease : IDisposable
+    {
+        private readonly SemaphoreSlim _sem;
+        private bool _disposed;
+        public SemaphoreRelease(SemaphoreSlim sem) => _sem = sem;
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+            _sem.Release();
+        }
+    }
 
     private static string SerializeSession(AgentSession session)
     {

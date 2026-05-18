@@ -143,11 +143,10 @@ public sealed class ToolPlanExecutor : IToolPlanExecutor
         foreach (var step in plan.Steps.Where(s => !results.ContainsKey(s.StepId)))
             results[step.StepId] = Skipped(step);
 
-        var success = results.Values.All(r => r.Success || r.Skipped == false && r.Skipped);
-        // Overall success: true only when every executed (non-skipped) step succeeded.
-        success = results.Values
-            .Where(r => !r.Skipped)
-            .All(r => r.Success);
+        // H9+H10 — Plan fails if ANY step failed or was skipped due to a dependency failure.
+        // Skipped steps indicate upstream failures that prevented parts of the plan from running;
+        // reporting success=true in that case would silently swallow partial execution.
+        var success = results.Values.All(r => r.Success);
 
         return BuildResult(plan, success, results, wall.Elapsed);
     }

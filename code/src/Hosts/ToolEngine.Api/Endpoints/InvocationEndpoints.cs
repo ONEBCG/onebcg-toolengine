@@ -1,5 +1,6 @@
 namespace ToolEngine.Api.Endpoints;
 
+using System.Text.Json;
 using ToolEngine.Core.Abstractions.Persistence;
 using ToolEngine.Core.Domain.Entities;
 using ToolEngine.Core.Domain.Enums;
@@ -59,10 +60,22 @@ public static class InvocationEndpoints
             expiresAt       = approval.ExpiresAt,
             decidedAt       = approval.DecidedAt,
             decidedByUserId = approval.DecidedByUserId,
-            // Populated once the approved execution completes (future resume path).
+            // H8 — TryDeserializeResult prevents a malformed stored JSON blob from
+            // returning 500 and permanently breaking status polling for this invocation.
             result          = approval.SerializedResult is not null
-                ? System.Text.Json.JsonSerializer.Deserialize<object>(approval.SerializedResult)
+                ? TryDeserializeResult(approval.SerializedResult)
                 : null
         });
+    }
+
+    /// <summary>
+    /// H8 — Safe deserialisation of a stored tool result JSON string.
+    /// Returns null (with no exception) if the stored value is malformed,
+    /// so that a corrupt result row does not break status polling indefinitely.
+    /// </summary>
+    private static object? TryDeserializeResult(string json)
+    {
+        try   { return JsonSerializer.Deserialize<JsonElement>(json); }
+        catch { return null; }
     }
 }

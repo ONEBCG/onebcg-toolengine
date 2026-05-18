@@ -104,7 +104,7 @@ public sealed class ReplLoop
     {
         var command = new AgentChatCommand(
             Guid.NewGuid(),
-            "acme-corp",   // CLI default tenant
+            "onebcg-default-tenant",   // CLI default tenant
             "cli-user",
             text,
             sessionId);

@@ -20,8 +20,14 @@ public static class DevEndpoints
         return app;
     }
 
-    private static IResult GenerateDevToken(JwtSettings jwt)
+    private static IResult GenerateDevToken(
+        JwtSettings jwt,
+        // H1 — accept an optional tenant parameter so dev tokens are not hard-coded
+        // to "onebcg-default-tenant". Value is lowercased to match Tenant.Create() normalisation.
+        [Microsoft.AspNetCore.Mvc.FromQuery] string? tenant = null)
     {
+        var tenantId = (tenant ?? "onebcg-default-tenant").Trim().ToLowerInvariant();
+
         var key   = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Secret));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
@@ -29,7 +35,7 @@ public static class DevEndpoints
         {
             new Claim(JwtRegisteredClaimNames.Sub, "dev-user"),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-            new Claim("tenant_id", "acme-corp"),
+            new Claim("tenant_id", tenantId),
         };
 
         var token = new JwtSecurityToken(
@@ -43,7 +49,7 @@ public static class DevEndpoints
         {
             token     = new JwtSecurityTokenHandler().WriteToken(token),
             expiresIn = 28800,
-            tenantId  = "acme-corp",
+            tenantId,
         });
     }
 }

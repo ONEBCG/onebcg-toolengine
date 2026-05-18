@@ -36,7 +36,7 @@ public sealed class InvokeToolCommand
         }
 
         var command = new ExecuteToolCommand<JsonElement, JsonElement>(
-            Guid.NewGuid(), "acme-corp", "cli-user",
+            Guid.NewGuid(), "onebcg-default-tenant", "cli-user",
             ToolName:      name,
             ToolVersion:   version,
             Input:         input,

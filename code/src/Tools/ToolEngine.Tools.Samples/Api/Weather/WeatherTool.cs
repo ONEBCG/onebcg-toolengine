@@ -103,10 +103,12 @@ public sealed class WeatherTool : ApiToolBase<WeatherInput, WeatherOutput>
                 ToolError.NotFound($"No weather data found for '{request.Input.City}'."));
 
         WeatherApiResponse.WeatherCondition cond = conditions[0];
+        // C5 — WeatherDesc itself can be null for malformed/empty API responses.
+        var conditionText = cond.WeatherDesc?.FirstOrDefault()?.Value ?? "Unknown";
         var output = new WeatherOutput(
             request.Input.City,
             double.TryParse(cond.TempC,    out var t) ? t : 0,
-            cond.WeatherDesc.FirstOrDefault()?.Value ?? "Unknown",
+            conditionText,
             int.TryParse(cond.Humidity,    out var h) ? h : 0,
             double.TryParse(cond.WindKmph, out var w) ? w : 0);
 

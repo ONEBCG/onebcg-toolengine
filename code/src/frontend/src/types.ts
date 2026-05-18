@@ -5,19 +5,18 @@ export const TOOL_TYPE_LABELS: Record<number, string> = {
   3: 'Composite',
 }
 
-export interface ToolMetadata {
+// Matches the flat ToolSummaryResponse shape returned by GET /tools
+export interface ToolDescriptor {
+  fullName: string
   namespace: string
   name: string
   version: string
   description: string
   type: number
-  tenantId: string | null
   isEnabled: boolean
-}
-
-export interface ToolDescriptor {
-  metadata: ToolMetadata
   tenantId: string | null
+  inputSchema: Record<string, unknown>
+  outputSchema: Record<string, unknown>
 }
 
 export interface ToolError {

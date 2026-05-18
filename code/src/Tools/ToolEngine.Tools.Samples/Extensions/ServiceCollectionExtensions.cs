@@ -75,9 +75,9 @@ internal sealed class InMemoryUserRepository
     private static readonly List<User> _seed =
     [
         new(Guid.Parse("11111111-0000-0000-0000-000000000001"),
-            "alice@acme-corp.com", "Alice Smith", "acme-corp", true),
+            "alice@onebcg-default-tenant.com", "Alice Smith", "onebcg-default-tenant", true),
         new(Guid.Parse("22222222-0000-0000-0000-000000000002"),
-            "bob@acme-corp.com", "Bob Jones", "acme-corp", true),
+            "bob@onebcg-default-tenant.com", "Bob Jones", "onebcg-default-tenant", true),
     ];
 
     public Task<User?> GetByIdAsync(Guid id, CancellationToken ct = default) =>

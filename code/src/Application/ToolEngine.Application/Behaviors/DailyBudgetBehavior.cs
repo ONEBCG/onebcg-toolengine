@@ -48,8 +48,10 @@ public sealed class DailyBudgetBehavior<TRequest, TResponse>
         if (tenant is null || tenant.DailyToolCallBudget <= 0)
             return await next(); // no cap configured — TenantAuth will reject unknown tenants
 
-        var startOfDayUtc = new DateTimeOffset(
-            DateTimeOffset.UtcNow.Date, TimeSpan.Zero);
+        // M2 — Use DateTime.UtcNow.Date (Kind=Utc) rather than DateTimeOffset.UtcNow.Date
+        // (Kind=Unspecified) to make the UTC-midnight intent explicit and safe if the
+        // clock source is ever changed from UtcNow.
+        var startOfDayUtc = new DateTimeOffset(DateTime.UtcNow.Date, TimeSpan.Zero);
 
         var spec = new LambdaSpecification<ToolInvocationRecord>(
             r => r.TenantId == cmd.TenantId && r.InvokedAt >= startOfDayUtc);

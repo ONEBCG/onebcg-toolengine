@@ -1,5 +1,6 @@
 namespace ToolEngine.Infrastructure.Cache;
 
+using System.Collections.Concurrent;
 using System.Text;
 using Microsoft.Extensions.Caching.Distributed;
 using ToolEngine.Core.Abstractions.Common;
@@ -16,6 +17,13 @@ using ToolEngine.Core.Abstractions.Common;
 internal sealed class DistributedCacheProvider : ICacheProvider
 {
     private readonly IDistributedCache _cache;
+
+    // H7 — per-key semaphores provide process-level atomicity for IncrementAsync.
+    // For multi-instance deployments (Redis), replace with IConnectionMultiplexer + INCR
+    // + EXPIRE for true distributed atomicity (Phase I). Leaving the optimistic GET→SET
+    // without a lock allows two concurrent requests on the same instance to both read
+    // the same counter value and both write n+1, silently under-counting.
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new();
 
     public DistributedCacheProvider(IDistributedCache cache) => _cache = cache;
 
@@ -39,12 +47,19 @@ internal sealed class DistributedCacheProvider : ICacheProvider
 
     public async Task<int> IncrementAsync(string key, TimeSpan ttl, CancellationToken ct = default)
     {
-        // Optimistic GET → increment → SET.
-        // For Redis: replace with IConnectionMultiplexer + INCR/EXPIRE for true atomicity (Phase I).
-        var raw = await GetStringAsync(key, ct);
-        var current = raw is null ? 0 : int.TryParse(raw, out var n) ? n : 0;
-        var next = current + 1;
-        await SetStringAsync(key, next.ToString(), ttl, ct);
-        return next;
+        var sem = _locks.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        await sem.WaitAsync(ct);
+        try
+        {
+            var raw     = await GetStringAsync(key, ct);
+            var current = raw is null ? 0 : int.TryParse(raw, out var n) ? n : 0;
+            var next    = current + 1;
+            await SetStringAsync(key, next.ToString(), ttl, ct);
+            return next;
+        }
+        finally
+        {
+            sem.Release();
+        }
     }
 }

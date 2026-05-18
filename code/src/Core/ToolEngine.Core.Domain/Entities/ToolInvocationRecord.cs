@@ -110,6 +110,18 @@ public sealed class ToolInvocationRecord : AggregateRoot<Guid>
         ErrorMessage = error.Description;
     }
 
+    /// <summary>
+    /// C3 — Marks the record as suspended pending human approval.
+    /// The record remains open; CompletedAt is not set.
+    /// Status will be updated to Succeeded or Failed when the approval is decided
+    /// and the tool re-executes (or is denied).
+    /// </summary>
+    public void MarkSuspended()
+    {
+        Status = ToolStatus.Suspended;
+        // CompletedAt intentionally NOT set — execution has not completed.
+    }
+
     public void MarkCancelled(IDateTimeProvider clock)
     {
         Status      = ToolStatus.Cancelled;

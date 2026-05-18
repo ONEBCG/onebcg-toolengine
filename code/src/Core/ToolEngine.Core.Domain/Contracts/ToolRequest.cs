@@ -5,7 +5,7 @@ using ToolEngine.Core.Domain.Enums;
 /// <summary>
 /// The single entry contract for every tool invocation — REST, CLI, or internal.
 /// CorrelationId: caller-generated trace ID propagated through logs and responses.
-/// TenantId: human-readable tenant slug, e.g. "acme-corp".
+/// TenantId: human-readable tenant slug, e.g. "onebcg-default-tenant".
 /// ToolVersion: pinned version string, e.g. "v1". Use "latest" for auto-resolve.
 /// Always created by the interface layer (API or CLI), never by a handler or tool.
 ///

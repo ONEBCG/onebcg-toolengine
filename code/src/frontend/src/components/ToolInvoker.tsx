@@ -14,7 +14,7 @@ export function ToolInvoker({ tool, onResponse }: Props) {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const example = EXAMPLE_INPUTS[tool.metadata.name]
+    const example = EXAMPLE_INPUTS[tool.name]
     setInput(example ?? '{}')
     setError(null)
   }, [tool])
@@ -32,9 +32,9 @@ export function ToolInvoker({ tool, onResponse }: Props) {
     setLoading(true)
     try {
       const response = await invokeTool(
-        tool.metadata.namespace,
-        tool.metadata.name,
-        tool.metadata.version,
+        tool.namespace,
+        tool.name,
+        tool.version,
         parsed,
       )
       onResponse(response)
@@ -49,10 +49,10 @@ export function ToolInvoker({ tool, onResponse }: Props) {
     <div className="invoker">
       <div className="invoker-header">
         <div>
-          <h2 className="invoker-title">{tool.metadata.name}</h2>
-          <p className="invoker-desc">{tool.metadata.description}</p>
+          <h2 className="invoker-title">{tool.name}</h2>
+          <p className="invoker-desc">{tool.description}</p>
         </div>
-        <span className="invoker-version">{tool.metadata.version}</span>
+        <span className="invoker-version">{tool.version}</span>
       </div>
 
       <label className="invoker-label">JSON Input</label>

@@ -70,7 +70,10 @@ public static class ApprovalEndpoints
                 title: "APPROVAL_EXPIRED");
         }
 
-        var decidedBy = body?.DecidedByUserId ?? "magic-link";
+        // H3 — The magic-link token is the shared secret; the caller's identity is
+        // always "magic-link". Accepting DecidedByUserId from the request body would
+        // allow anyone with the URL to forge arbitrary audit identities.
+        var decidedBy = "magic-link";
 
         var result = action.ToLowerInvariant() switch
         {
@@ -124,9 +127,10 @@ public static class ApprovalEndpoints
                 title: "APPROVAL_EXPIRED");
         }
 
-        var inputHash = EmailOtpChannel.HashOtp(body.Otp);
+        // C1+C2 — VerifyOtp re-derives PBKDF2 with the embedded salt and uses
+        // CryptographicOperations.FixedTimeEquals to prevent timing-oracle attacks.
         if (tracked.OtpHash is null ||
-            !inputHash.Equals(tracked.OtpHash, StringComparison.Ordinal))
+            !EmailOtpChannel.VerifyOtp(body.Otp, tracked.OtpHash))
         {
             // Increment failure counter. IncrementFailedOtpAttempts returns true
             // when the max is reached and transitions the approval to Expired.

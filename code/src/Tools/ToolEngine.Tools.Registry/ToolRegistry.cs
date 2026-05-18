@@ -1,7 +1,6 @@
 namespace ToolEngine.Tools.Registry;
 
 using System.Collections.Concurrent;
-using System.Text.RegularExpressions;
 using ToolEngine.Core.Domain.Common;
 using ToolEngine.Tools.Abstractions.Interfaces;
 using ToolEngine.Tools.Abstractions.Metadata;
@@ -80,7 +79,7 @@ public sealed class ToolRegistry : IToolRegistry
                           (k.Item3 == "" || k.Item3 == (tenantId ?? "")))
               .Select(k => k.Item2)
               .Distinct()
-              .OrderByDescending(ExtractVersionNumber)
+              .OrderByDescending(ExtractVersionForOrdering)
               .ToList()
               .AsReadOnly();
 
@@ -93,9 +92,17 @@ public sealed class ToolRegistry : IToolRegistry
         string fullName, string version, string? tenantId) =>
         (fullName.ToLowerInvariant(), version.ToLowerInvariant(), tenantId ?? "");
 
-    private static int ExtractVersionNumber(string version)
+    /// <summary>
+    /// H14 — Orders versions so that "latest" resolves to the highest semantic version.
+    /// Uses <see cref="Version"/> parsing (strips a leading "v") for accurate comparison:
+    /// "v1.10" &gt; "v1.2" where the old \d+ regex returned 1 == 1 (undefined ordering).
+    /// Falls back to the first digit run only when the version string is not parseable.
+    /// </summary>
+    private static Version ExtractVersionForOrdering(string version)
     {
-        var match = Regex.Match(version, @"\d+");
-        return match.Success ? int.Parse(match.Value) : 0;
+        var stripped = version.TrimStart('v', 'V');
+        return Version.TryParse(stripped, out var parsed)
+            ? parsed
+            : new Version(0, 0);
     }
 }

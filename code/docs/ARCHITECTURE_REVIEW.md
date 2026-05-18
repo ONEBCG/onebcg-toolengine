@@ -37,6 +37,8 @@ Findings are rated: **Critical** (security/compliance risk), **High** (reliabili
 | Scalability | ⚠️ Partial | LLM sessions in ICacheProvider (Redis-ready); no durable approval re-execution |
 | Compliance (SOC 2, GDPR, EU AI Act) | ✅ Good | H1–H5 all resolved; LLM CallerType + GovernanceMetadataJson extend H4/H5 to agent path |
 | LLM provider abstraction | ✅ Good | Anthropic / OpenAI / Ollama; config routing; per-tool + per-tenant override; session budgets |
+| Frontend developer console | ✅ Good | React/TypeScript/Vite; flat ToolDescriptor; res.ok error guard; Swagger link |
+| Runtime hardening | ✅ Good | Phase M resolves 8 defects: DI scope, IAsyncDisposable, stale schema, tenant seeding, type mismatch |
 
 ---
 
@@ -372,6 +374,43 @@ See §3. After an approver approves, the tool does not automatically re-execute.
 
 ---
 
+---
+
+## 12. Runtime Hardening — Phase M
+
+### What matches
+
+All Phase M items represent defects discovered during integration testing. Each was isolated, root-caused, and resolved without modifying architectural contracts or breaking existing tests.
+
+### M1–M2 — DI scope and `IAsyncDisposable`
+
+`ToolExecutor` previously accepted `IServiceProvider` and resolved handlers from the root container. This is a structural violation of .NET DI: scoped services (`IUnitOfWork`, `AppDbContext`) registered as `Scoped` cannot be resolved from the root `IServiceProvider` — the runtime throws `InvalidOperationException` immediately.
+
+The fix (`IServiceScopeFactory` + `CreateAsyncScope`) is the canonical .NET pattern for per-operation scoped service resolution. The secondary issue — `UnitOfWork` implementing only `IAsyncDisposable` — was exposed by the first fix attempt using synchronous `using`. The runtime throws when the sync `Dispose()` method is absent. `await using` with `CreateAsyncScope()` is the correct form.
+
+Both defects were latent from the initial scaffold. They became visible only when a tool handler first required a scoped dependency (`UserLookupTool` uses `IUnitOfWork`).
+
+### M3–M4 — Schema and tenant seeding
+
+Both `EnsureCreated` (not `EnsureDeletedAsync + EnsureCreatedAsync`) and missing tenant seed are common development-environment pitfalls in EF Core projects. `EnsureCreated` is a no-op on an existing file — adding new entity types never triggers schema updates. `EnsureDeleted` must precede `EnsureCreated` in ephemeral dev environments.
+
+The tenant seed ensures the `TenantAuthorizationBehavior` pipeline guard passes on first run without a separate setup step. This is appropriate for development; production tenants must be provisioned explicitly.
+
+### M5–M8 — Frontend defects
+
+The `ToolDescriptor` type mismatch (M6) is a contract drift defect: the backend API shape changed in a previous session but the frontend type was never updated. The flat `ToolSummaryResponse` DTO is the correct projection for list endpoints — it avoids over-fetching and provides a stable, versioned API contract.
+
+The missing `res.ok` guard (M7) is a standard `fetch` pitfall — unlike `XMLHttpRequest`, `fetch` only rejects on network errors, not HTTP error status codes. All `fetch` call sites must check `res.ok` before parsing the response body.
+
+### Gaps
+
+**[Low] No contract testing between frontend `ToolDescriptor` and backend `ToolSummaryResponse`.**
+The M6 defect was caused by contract drift with no automated detection. A Pact or OpenAPI schema validation test would catch this at CI time rather than at runtime.
+
+*Recommendation:* Generate a TypeScript client from the OpenAPI spec (`openapi-typescript` or `orval`) and import it in the frontend instead of maintaining a hand-written `types.ts`.
+
+---
+
 ## Priority action plan
 
 ### Immediate (before any production deployment) — Phase E complete ✅
@@ -413,6 +452,19 @@ See §3. After an approver approves, the tool does not automatically re-execute.
 | H3 | EU AI Act Article 14 acknowledgement payload for High/Critical | H | ✅ Done |
 | H4 | Agent identity claims in JWT (`CallerType`) + propagate through pipeline | H | ✅ Done |
 | H5 | ISO 42001 AI governance metadata on `ToolInvocationRecord` | H | ✅ Done |
+
+### Runtime — Phase M complete ✅
+
+| # | Finding | Status |
+|---|---|---|
+| M1 | `ToolExecutor` DI scope: `IServiceScopeFactory` + `CreateAsyncScope()` per execution | ✅ Done |
+| M2 | `IAsyncDisposable`-only `UnitOfWork` — sync `Dispose()` throws; fixed with `await using` | ✅ Done |
+| M3 | CLI startup crash (`no such table: OutboxMessages`) — `EnsureDeletedAsync` + `EnsureCreatedAsync` | ✅ Done |
+| M4 | Dev tenant not seeded — `TenantAuthorizationBehavior` returns 401 on all invocations | ✅ Done |
+| M5 | Default tenant renamed `acme-corp` → `onebcg-default-tenant` across all hosts and frontend | ✅ Done |
+| M6 | Frontend `ToolDescriptor` nested-to-flat type mismatch — tools tab rendered blank | ✅ Done |
+| M7 | Invoke button silent crash — missing `res.ok` guard in `invokeTool` | ✅ Done |
+| M8 | Swagger link added to UI header; `BASE` exported from `api.ts` | ✅ Done |
 
 ### Medium-term (next quarter) — Phase L complete ✅
 

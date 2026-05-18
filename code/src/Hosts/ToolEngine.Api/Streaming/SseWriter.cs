@@ -37,8 +37,12 @@ public static class SseWriter
         string            message,
         CancellationToken ct)
     {
+        // C6 — serialize via STJ so quotes, backslashes, and newlines in exception
+        // messages are properly escaped. Raw interpolation broke the SSE JSON frame
+        // and could poison the stream or allow SSE event injection.
+        var payload = JsonSerializer.Serialize(new { error = message }, _json);
         await response.WriteAsync($"event: error\n", ct);
-        await response.WriteAsync($"data: {{\"error\":\"{message}\"}}\n\n", ct);
+        await response.WriteAsync($"data: {payload}\n\n", ct);
         await response.Body.FlushAsync(ct);
     }
 }

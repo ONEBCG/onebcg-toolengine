@@ -70,8 +70,14 @@ public sealed class Tenant : AggregateRoot<string>, IAuditableEntity
     }
 
     /// <summary>Allow all tools in a namespace, e.g. "payment" or "weather".</summary>
-    public void AllowNamespace(string ns) =>
-        _allowedNamespaces.Add(ns.ToLowerInvariant());
+    public void AllowNamespace(string ns)
+    {
+        // H5 — mirrors the duplicate guard on AllowTool to prevent double-entries
+        // which would waste storage and cause confusing AllowedNamespaces listings.
+        var normalised = ns.ToLowerInvariant();
+        if (!_allowedNamespaces.Contains(normalised, StringComparer.OrdinalIgnoreCase))
+            _allowedNamespaces.Add(normalised);
+    }
 
     public void SetLlmProvider(string providerName, string? secretRef = null)
     {

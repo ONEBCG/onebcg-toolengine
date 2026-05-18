@@ -65,6 +65,20 @@ public sealed class OutboxMessage : Entity<Guid>
         NextRetryAt  = DateTimeOffset.UtcNow + backoff;
     }
 
+    /// <summary>
+    /// H11 — Terminally abandons the message so it is never retried again.
+    /// Called for unrecoverable failures (e.g. unknown channel type) where retrying
+    /// will always produce the same error. Sets RetryCount to MaxRetries so the
+    /// dispatch query filter (RetryCount &lt; MaxRetries) permanently excludes this row.
+    /// </summary>
+    public void Abandon(string reason, int maxRetries)
+    {
+        LastError   = $"[ABANDONED] {reason}";
+        RetryCount  = maxRetries; // query filter: RetryCount < MaxRetries → row excluded
+        NextRetryAt = null;
+        // SentAt intentionally NOT set — the message was never delivered.
+    }
+
     /// <summary>True when the message is eligible for dispatch.</summary>
     public bool IsReady =>
         SentAt is null &&

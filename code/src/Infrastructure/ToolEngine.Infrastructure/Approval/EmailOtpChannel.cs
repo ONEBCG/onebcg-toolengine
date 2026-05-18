@@ -1,7 +1,6 @@
 namespace ToolEngine.Infrastructure.Approval;
 
 using System.Security.Cryptography;
-using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ToolEngine.Core.Domain.Entities;
@@ -74,7 +73,43 @@ public sealed class EmailOtpChannel : IApprovalChannel
         return value.ToString("D6");
     }
 
-    // SHA-256 hash stored in DB — never the plaintext OTP.
-    public static string HashOtp(string otp) =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(otp)));
+    /// <summary>
+    /// C1 — Produces a PBKDF2-HMAC-SHA256 hash of the OTP with a fresh random salt.
+    /// Stored format: "{32-hex-salt}:{64-hex-key}" (97 chars total).
+    /// A 6-digit OTP has only 10^6 possible values; an unsalted SHA-256 would be
+    /// brute-forced offline in milliseconds from a DB snapshot.
+    /// 100 000 PBKDF2 iterations raise the cost of a full-space attack to ~2 CPU-hours.
+    /// </summary>
+    public static string HashOtp(string otp)
+    {
+        var salt = RandomNumberGenerator.GetBytes(16);
+        var key  = Rfc2898DeriveBytes.Pbkdf2(
+            otp, salt, iterations: 100_000,
+            HashAlgorithmName.SHA256, outputLength: 32);
+        return $"{Convert.ToHexString(salt)}:{Convert.ToHexString(key)}";
+    }
+
+    /// <summary>
+    /// C2 — Verifies an OTP against a stored PBKDF2 hash using constant-time comparison.
+    /// Extracts the embedded salt, re-derives the key, then uses
+    /// <see cref="CryptographicOperations.FixedTimeEquals"/> to prevent timing-oracle attacks.
+    /// </summary>
+    public static bool VerifyOtp(string otp, string storedHash)
+    {
+        var parts = storedHash.Split(':');
+        if (parts.Length != 2) return false;
+        byte[] salt, expectedKey;
+        try
+        {
+            salt        = Convert.FromHexString(parts[0]);
+            expectedKey = Convert.FromHexString(parts[1]);
+        }
+        catch (FormatException) { return false; }
+
+        var actualKey = Rfc2898DeriveBytes.Pbkdf2(
+            otp, salt, iterations: 100_000,
+            HashAlgorithmName.SHA256, outputLength: 32);
+
+        return CryptographicOperations.FixedTimeEquals(actualKey, expectedKey);
+    }
 }

@@ -27,9 +27,11 @@ internal sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
                    v => System.Text.Json.JsonSerializer.Deserialize<List<string>>(
                             v, (System.Text.Json.JsonSerializerOptions?)null)
                         ?? new List<string>(),
-                   new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<List<string>>(
+                   // M3 — null-safe GetHashCode: EF Core may materialise lists that contain
+               // null entries from malformed JSON; s?.GetHashCode() ?? 0 prevents NRE.
+               new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<List<string>>(
                        (a, b) => a != null && b != null && a.SequenceEqual(b),
-                       v => v.Aggregate(0, (h, s) => HashCode.Combine(h, s.GetHashCode())),
+                       v => v.Aggregate(0, (h, s) => HashCode.Combine(h, s != null ? s.GetHashCode() : 0)),
                        v => v.ToList()));
 
         // AllowedNamespaces is backed by a private List<string> field; stored as JSON.
@@ -43,7 +45,7 @@ internal sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
                         ?? new List<string>(),
                    new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<List<string>>(
                        (a, b) => a != null && b != null && a.SequenceEqual(b),
-                       v => v.Aggregate(0, (h, s) => HashCode.Combine(h, s.GetHashCode())),
+                       v => v.Aggregate(0, (h, s) => HashCode.Combine(h, s != null ? s.GetHashCode() : 0)),
                        v => v.ToList()));
 
         builder.Ignore(t => t.DomainEvents);

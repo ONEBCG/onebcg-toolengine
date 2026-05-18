@@ -32,7 +32,7 @@ dotnet run
 
 The API starts at `http://localhost:5174`. In development:
 - Swagger UI: `http://localhost:5174/swagger`
-- Dev token: `GET http://localhost:5174/dev/token?tenantId=acme-corp&userId=user-123`
+- Dev token: `GET http://localhost:5174/dev/token?tenantId=onebcg-default-tenant&userId=user-123`
 - Health: `GET http://localhost:5174/health`
 
 ### Run the CLI

@@ -120,6 +120,17 @@ html, body, #root {
   font-size: 12px;
 }
 
+.swagger-link {
+  font-size: 12px;
+  color: var(--dark-grey);
+  text-decoration: none;
+  border: 1px solid var(--dark-grey);
+  border-radius: 3px;
+  padding: 3px 10px;
+  transition: color 0.12s, border-color 0.12s;
+}
+.swagger-link:hover { color: #fff; border-color: #fff; }
+
 .app-body {
   display: flex;
   flex: 1;

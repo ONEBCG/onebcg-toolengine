@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ToolDescriptor, ToolResponse } from './types'
-import { fetchDevToken, fetchTools, fetchHealth } from './api'
+import { fetchDevToken, fetchTools, fetchHealth, BASE } from './api'
 import { ToolList } from './components/ToolList'
 import { ToolInvoker } from './components/ToolInvoker'
 import { ResponsePanel } from './components/ResponsePanel'
@@ -86,7 +86,15 @@ export default function App() {
           <span className={`health-badge ${healthy ? 'health-badge--ok' : 'health-badge--err'}`}>
             {healthy ? '● API healthy' : '● API unhealthy'}
           </span>
-          <span className="header-tenant">tenant: acme-corp</span>
+          <span className="header-tenant">tenant: onebcg-default-tenant</span>
+          <a
+            href={`${BASE}/swagger`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="swagger-link"
+          >
+            API Docs ↗
+          </a>
         </div>
       </header>
 

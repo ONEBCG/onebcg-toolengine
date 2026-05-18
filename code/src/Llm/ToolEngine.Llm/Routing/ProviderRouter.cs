@@ -58,10 +58,14 @@ public sealed class ProviderRouter : IProviderRouter
             if (_providers.TryGetValue(fallback, out var fp)) return fp;
         }
 
-        // Last resort — first registered
-        if (_providers.Count == 0)
-            throw new InvalidOperationException("No LLM providers are registered.");
-
-        return _providers.Values.First();
+        // M7 — throw rather than silently returning _providers.Values.First():
+        // dictionary iteration order depends on DI registration order; a silent
+        // "first registered" fallback makes routing non-deterministic and hides
+        // misconfiguration until production incidents occur.
+        var registered = string.Join(", ", _providers.Keys);
+        throw new InvalidOperationException(
+            $"LLM provider '{key}' is not registered and no fallback in the chain matched. " +
+            $"Registered providers: [{registered}]. " +
+            $"Check Llm:DefaultProvider and Llm:Routing:FallbackChain in appsettings.");
     }
 }

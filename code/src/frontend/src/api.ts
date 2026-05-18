@@ -1,6 +1,6 @@
 import type { AgentChatResponse, ToolDescriptor, ToolResponse } from './types'
 
-const BASE = 'http://localhost:5174'
+export const BASE = 'http://localhost:5174'
 
 let _token: string | null = null
 
@@ -40,6 +40,10 @@ export async function invokeTool(
     },
     body: JSON.stringify(input),
   })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { detail?: string; title?: string }
+    throw new Error(err.detail ?? err.title ?? `Invocation failed: HTTP ${res.status}`)
+  }
   return res.json()
 }
 

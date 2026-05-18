@@ -15,6 +15,8 @@ using ToolEngine.Api.Endpoints;
 using ToolEngine.Api.Middleware;
 using ToolEngine.Application.Extensions;
 using ToolEngine.Application.Telemetry;
+using ToolEngine.Core.Abstractions.Common;
+using ToolEngine.Core.Domain.Entities;
 using ToolEngine.Infrastructure.Approval;
 using ToolEngine.Infrastructure.Extensions;
 using ToolEngine.Tools.Executor.Extensions;
@@ -35,13 +37,31 @@ try
         .ReadFrom.Configuration(ctx.Configuration)
         .Enrich.FromLogContext()
         .WriteTo.Console()
-        // G4 — mask email addresses in all structured log properties.
-        // Prevents GDPR-regulated PII (approver email, webhook URLs) from appearing
-        // in plaintext log streams or being shipped to third-party log aggregators.
+        // G4 — mask email addresses in structured log properties.
+        // Prevents GDPR-regulated PII (approver email) from appearing in plaintext
+        // log streams or being shipped to third-party log aggregators.
+        //
+        // M4 fix: use a regex scoped to RFC-5321-like addresses (no spaces, has @,
+        // has a dot after @) to avoid masking tool inputs/outputs that contain '@'
+        // (e.g. npm scope "@scope/pkg", Slack "@everyone", file paths).
+        // Previous implementation matched any string containing '@', corrupting logs.
         .Destructure.ByTransforming<string>(s =>
-            s.Contains('@')
-                ? $"{(s.Length > 2 ? s[..2] : s[..1])}***@***.***"
-                : s));
+        {
+            // Fast-path: skip strings with no '@'.
+            var atIdx = s.IndexOf('@');
+            if (atIdx < 0) return s;
+
+            // Only mask if the string looks like a standalone email address:
+            // no whitespace, at least one char before '@', a dot somewhere after '@'.
+            if (s.Contains(' ') || s.Contains('\t') || s.Contains('\n')) return s;
+            var afterAt = s.AsSpan(atIdx + 1);
+            if (!afterAt.Contains('.')) return s;
+
+            // Mask: keep first 2 chars of local-part, hide rest.
+            var localPart = s[..atIdx];
+            var prefix    = localPart.Length >= 2 ? localPart[..2] : localPart[..1];
+            return $"{prefix}***@***.***";
+        }));
 
     // ── Authentication ───────────────────────────────────────────────────────
     var jwt = builder.Configuration.GetSection("Jwt").Get<JwtSettings>()
@@ -225,6 +245,15 @@ try
         {
             await db.Database.EnsureDeletedAsync();
             await db.Database.EnsureCreatedAsync();
+
+            // Seed a default dev tenant so the tool invocation pipeline can resolve
+            // "onebcg-default-tenant" without requiring a separate setup step.
+            // AllowNamespace("*") grants access to all registered namespaces.
+            var clock = dbScope.ServiceProvider.GetRequiredService<IDateTimeProvider>();
+            var devTenant = Tenant.Create("onebcg-default-tenant", "ONE BCG Default Tenant", "dev-seed", clock).Value;
+            devTenant.AllowNamespace("*");
+            db.Set<Tenant>().Add(devTenant);
+            await db.SaveChangesAsync();
         }
         else
             await db.Database.MigrateAsync();

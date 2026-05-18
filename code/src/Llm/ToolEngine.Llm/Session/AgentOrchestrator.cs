@@ -50,7 +50,12 @@ public sealed class AgentOrchestrator
         CancellationToken ct)
     {
         var isSingleTurn = sessionId is null;
-        var session      = await _sessionStore.GetOrCreateAsync(sessionId, isSingleTurn, ct);
+        // H15 — acquire a per-session lock before reading/writing session state.
+        // Prevents two concurrent requests on the same multi-turn session from
+        // clobbering each other's message history (last-writer-wins data loss).
+        var effectiveSessionId = sessionId ?? Guid.NewGuid().ToString();
+        using var sessionLock  = await _sessionStore.AcquireSessionLockAsync(effectiveSessionId, ct);
+        var session            = await _sessionStore.GetOrCreateAsync(sessionId, isSingleTurn, ct);
 
         // Tenant-scoped tool list — LLM only sees tools this tenant is allowed to use
         var descriptors = _registry.ListAll(tenantId);

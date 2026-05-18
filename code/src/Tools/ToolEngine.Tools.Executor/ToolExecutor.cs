@@ -11,8 +11,8 @@ using ToolEngine.Tools.Registry;
 
 public sealed class ToolExecutor : IToolExecutor
 {
-    private readonly IToolRegistry    _registry;
-    private readonly IServiceProvider _services;
+    private readonly IToolRegistry       _registry;
+    private readonly IServiceScopeFactory _scopeFactory;
 
     private static readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -20,10 +20,10 @@ public sealed class ToolExecutor : IToolExecutor
         PropertyNameCaseInsensitive = true,
     };
 
-    public ToolExecutor(IToolRegistry registry, IServiceProvider services)
+    public ToolExecutor(IToolRegistry registry, IServiceScopeFactory scopeFactory)
     {
-        _registry = registry;
-        _services = services;
+        _registry     = registry;
+        _scopeFactory = scopeFactory;
     }
 
     public async Task<ToolResponse<TOutput>> ExecuteAsync<TInput, TOutput>(
@@ -38,7 +38,13 @@ public sealed class ToolExecutor : IToolExecutor
                 request.CorrelationId,
                 ToolError.FromError(resolve.Error, 404));
 
-        var handlerObj = _services.GetService(resolve.Value.HandlerType);
+        // Create a DI scope per execution so that tool handlers that depend on scoped
+        // services (e.g. IUnitOfWork, AppDbContext) are resolved correctly.
+        // Resolving from the root provider throws InvalidOperationException for scoped deps.
+        // UnitOfWork only implements IAsyncDisposable — must use CreateAsyncScope() +
+        // await using so DisposeAsync() is called instead of the synchronous Dispose().
+        await using var scope = _scopeFactory.CreateAsyncScope();
+        var handlerObj = scope.ServiceProvider.GetService(resolve.Value.HandlerType);
 
         if (handlerObj is null)
             return ToolResponse<TOutput>.Fail(

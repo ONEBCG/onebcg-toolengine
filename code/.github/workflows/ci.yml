@@ -36,6 +36,30 @@ jobs:
           --collect:"XPlat Code Coverage"
           --results-directory TestResults
 
+      # M16 — enforce ≥80% line coverage as a hard gate.
+      # reportgenerator merges all coverage.xml files and writes a summary;
+      # the shell script reads the line-rate and fails the build if below threshold.
+      - name: Install ReportGenerator
+        run: dotnet tool install --global dotnet-reportgenerator-globaltool
+
+      - name: Generate coverage report
+        run: >
+          reportgenerator
+          -reports:"TestResults/**/coverage.cobertura.xml"
+          -targetdir:"TestResults/CoverageReport"
+          -reporttypes:"Cobertura;TextSummary"
+
+      - name: Enforce 80% coverage gate
+        run: |
+          LINE_RATE=$(grep -oP 'line-rate="\K[^"]+' TestResults/CoverageReport/Cobertura.xml | head -1)
+          echo "Line coverage: $LINE_RATE"
+          THRESHOLD=0.80
+          if (( $(echo "$LINE_RATE < $THRESHOLD" | bc -l) )); then
+            echo "FAIL: line coverage $LINE_RATE is below threshold $THRESHOLD"
+            exit 1
+          fi
+          echo "PASS: line coverage $LINE_RATE >= $THRESHOLD"
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4

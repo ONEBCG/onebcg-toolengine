@@ -14,11 +14,28 @@ public sealed class TenantClaimsTransformer : IClaimsTransformation
         if (principal.Identity?.IsAuthenticated != true)
             return Task.FromResult(principal);
 
-        if (principal.FindFirst("tenant_id") is not null)
-            return Task.FromResult(principal);
+        var tenantClaim = principal.FindFirst("tenant_id");
+        if (tenantClaim is null)
+        {
+            // Strip authentication if tenant_id is missing.
+            var anonymous = new ClaimsPrincipal(new ClaimsIdentity());
+            return Task.FromResult(anonymous);
+        }
 
-        // Strip authentication if tenant_id is missing
-        var anonymous = new ClaimsPrincipal(new ClaimsIdentity());
-        return Task.FromResult(anonymous);
+        // C4 — Tenant IDs are stored lowercase via Tenant.Create().
+        // Normalise the claim value so "Acme" and "acme" resolve to the same row
+        // rather than producing a spurious 401 on a valid token.
+        var normalized = tenantClaim.Value.Trim().ToLowerInvariant();
+        if (normalized == tenantClaim.Value)
+            return Task.FromResult(principal); // already canonical — no copy needed
+
+        var identity = new ClaimsIdentity(
+            principal.Claims.Select(c =>
+                c.Type == "tenant_id"
+                    ? new Claim("tenant_id", normalized, c.ValueType, c.Issuer)
+                    : c),
+            principal.Identity.AuthenticationType);
+
+        return Task.FromResult(new ClaimsPrincipal(identity));
     }
 }

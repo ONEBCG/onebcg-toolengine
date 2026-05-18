@@ -15,22 +15,22 @@ export function ToolList({ tools, selected, onSelect }: Props) {
         <div className="tool-list-empty">No tools registered</div>
       )}
       {tools.map((tool) => {
-        const isSelected = selected?.metadata.name === tool.metadata.name
-        const typeLabel = TOOL_TYPE_LABELS[tool.metadata.type] ?? 'Unknown'
+        const isSelected = selected?.name === tool.name
+        const typeLabel = TOOL_TYPE_LABELS[tool.type] ?? 'Unknown'
         return (
           <button
-            key={tool.metadata.name + tool.metadata.version}
+            key={tool.name + tool.version}
             className={`tool-item ${isSelected ? 'tool-item--active' : ''}`}
             onClick={() => onSelect(tool)}
           >
-            <span className="tool-item-name">{tool.metadata.name}</span>
+            <span className="tool-item-name">{tool.name}</span>
             <span className="tool-item-meta">
               <span className={`tool-type tool-type--${typeLabel.toLowerCase()}`}>
                 {typeLabel}
               </span>
-              <span className="tool-version">{tool.metadata.version}</span>
+              <span className="tool-version">{tool.version}</span>
             </span>
-            <span className="tool-item-desc">{tool.metadata.description}</span>
+            <span className="tool-item-desc">{tool.description}</span>
           </button>
         )
       })}

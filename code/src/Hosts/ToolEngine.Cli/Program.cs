@@ -5,6 +5,8 @@ using Serilog;
 using ToolEngine.Application.Extensions;
 using ToolEngine.Cli.Guards;
 using ToolEngine.Cli.Repl;
+using ToolEngine.Core.Abstractions.Common;
+using ToolEngine.Core.Domain.Entities;
 using ToolEngine.Infrastructure.Extensions;
 using ToolEngine.Llm.Extensions;
 using ToolEngine.Tools.Abstractions.Interfaces;
@@ -36,12 +38,20 @@ var host = Host.CreateDefaultBuilder(args)
     })
     .Build();
 
-// Ensure DB exists
-using (var scope = host.Services.CreateScope())
+// Drop and recreate schema on every startup — prevents stale-schema errors when
+// entities are added (e.g. OutboxMessages). CLI data is ephemeral; seed after create.
+await using (var scope = host.Services.CreateAsyncScope())
 {
     var db = scope.ServiceProvider
                   .GetRequiredService<ToolEngine.Infrastructure.Persistence.AppDbContext>();
-    db.Database.EnsureCreated();
+    await db.Database.EnsureDeletedAsync();
+    await db.Database.EnsureCreatedAsync();
+
+    var clock     = scope.ServiceProvider.GetRequiredService<IDateTimeProvider>();
+    var devTenant = Tenant.Create("onebcg-default-tenant", "ONE BCG Default Tenant", "cli-seed", clock).Value;
+    devTenant.AllowNamespace("*");
+    db.Set<Tenant>().Add(devTenant);
+    await db.SaveChangesAsync();
 }
 
 // StartAsync runs all IHostedService.StartAsync — this is where tool registration happens.

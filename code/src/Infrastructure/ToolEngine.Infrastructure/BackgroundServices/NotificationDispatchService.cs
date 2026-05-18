@@ -88,9 +88,12 @@ internal sealed class NotificationDispatchService : BackgroundService
         foreach (var message in batch)
         {
             await DispatchSingleAsync(message, ctx, selector, approvalReadRepo, ct);
+            // M5 — Save after each message rather than batching all 50 into one commit.
+            // A single DbUpdateConcurrencyException in the batch would roll back mutations
+            // for messages already successfully delivered, causing duplicate re-deliveries
+            // on the next poll cycle. Per-message saves bound the blast radius to one row.
+            await ctx.SaveChangesAsync(ct);
         }
-
-        await ctx.SaveChangesAsync(ct);
     }
 
     private async Task DispatchSingleAsync(
@@ -115,9 +118,12 @@ internal sealed class NotificationDispatchService : BackgroundService
             message.ChannelType, out var channelType))
         {
             _log.LogError(
-                "OutboxMessage {Id}: unknown channel type '{Type}' — abandoning.",
+                "OutboxMessage {Id}: unknown channel type '{Type}' — abandoning permanently.",
                 message.Id, message.ChannelType);
-            message.RecordFailure($"Unknown channel type: {message.ChannelType}");
+            // H11 — Abandon terminally: an unknown channel type will never succeed.
+            // RecordFailure would schedule exponential retries for days; Abandon
+            // sets RetryCount = MaxRetries so the dispatch query excludes this row forever.
+            message.Abandon($"Unknown channel type: {message.ChannelType}", MaxRetries);
             return;
         }
 
