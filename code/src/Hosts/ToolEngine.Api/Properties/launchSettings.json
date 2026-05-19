@@ -16,7 +16,7 @@
       "applicationUrl": "http://localhost:5174",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "ANTHROPIC_API_KEY": "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"
+        "ANTHROPIC_API_KEY": "{API-KEY}"
       }
     },
     "https": {
@@ -26,7 +26,7 @@
       "applicationUrl": "https://localhost:7212;http://localhost:5174",
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development",
-        "ANTHROPIC_API_KEY": "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"
+        "ANTHROPIC_API_KEY": "{API-KEY}"
       }
     },
     "IIS Express": {
