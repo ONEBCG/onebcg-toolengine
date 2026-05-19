@@ -6,30 +6,32 @@ using Microsoft.Extensions.Options;
 using ToolEngine.Application.Abstractions;
 using ToolEngine.Application.Telemetry;
 using ToolEngine.Core.Abstractions.Common;
+using ToolEngine.Core.Domain.Constants;
 using ToolEngine.Core.Domain.Contracts;
 
 /// <summary>
 /// Detects agent-driven tool call loops within a single correlation context.
 /// A correlation represents one agent turn; if the same tool is invoked more than
-/// MaxCallsPerCorrelation times the circuit opens.
+/// MaxCallsPerCorrelation times the circuit opens and returns an error.
 ///
 /// State is stored in ICacheProvider:
 ///   - Memory  (default): in-process, correct for single-pod.
 ///   - Redis   ("Cache:Provider": "redis"): distributed, correct for multi-pod.
 ///
 /// Key pattern: "loop:{correlationId}:{namespace}.{name}"
-/// TTL:         10 minutes (one agent turn lifetime).
+/// TTL:         <see cref="ServiceLimits.LoopDetectionTtlMinutes"/> minutes (one agent turn lifetime).
 /// </summary>
 public sealed class LoopDetectionOptions
 {
-    public int MaxCallsPerCorrelation { get; set; } = 10;
+    public int MaxCallsPerCorrelation { get; set; } = ServiceLimits.LoopDetectionMaxCallsPerCorrelation;
 }
 
 public sealed class LoopDetectionBehavior<TRequest, TResponse>
     : IPipelineBehavior<TRequest, TResponse>
     where TRequest : notnull
 {
-    private static readonly TimeSpan Ttl = TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan Ttl =
+        TimeSpan.FromMinutes(ServiceLimits.LoopDetectionTtlMinutes);
 
     private readonly ICacheProvider        _cache;
     private readonly LoopDetectionOptions  _options;
@@ -54,7 +56,8 @@ public sealed class LoopDetectionBehavior<TRequest, TResponse>
         if (count > _options.MaxCallsPerCorrelation)
         {
             await _cache.RemoveAsync(key, ct);
-            // G2 — loop detection metric
+            // Emit a metric so loop-detection events are visible in dashboards
+            // and can trigger alerts before cost accumulates further.
             ToolEngineTelemetry.LoopDetectionTriggers.Add(1,
                 new TagList
                 {
@@ -62,7 +65,7 @@ public sealed class LoopDetectionBehavior<TRequest, TResponse>
                     { "tenant.id",     cmd.TenantId }
                 });
             return Fail(cmd, new ToolError(
-                "AGENT_LOOP_DETECTED",
+                ErrorCodes.AgentLoopDetected,
                 $"Tool '{cmd.ToolNamespace}.{cmd.ToolName}' called {count} times " +
                 $"for correlation {cmd.CorrelationId}. Circuit open — agent loop suspected.",
                 429));

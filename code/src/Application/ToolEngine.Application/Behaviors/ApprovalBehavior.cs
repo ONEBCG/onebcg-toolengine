@@ -4,6 +4,7 @@ using System.Diagnostics;
 using MediatR;
 using ToolEngine.Application.Abstractions;
 using ToolEngine.Application.Telemetry;
+using ToolEngine.Core.Domain.Constants;
 using ToolEngine.Core.Domain.Contracts;
 using ToolEngine.Tools.Abstractions.Interfaces;
 
@@ -19,7 +20,7 @@ using ToolEngine.Tools.Abstractions.Interfaces;
 ///     Return ToolResponse.Suspended(correlationId, pendingInvocationId) →
 ///     mapped to HTTP 202 by the endpoint handler.
 /// 4b. Deny path: gate returns Approved=false.
-///     Return ToolResponse.Fail with UNAUTHORIZED.
+///     Return ToolResponse.Fail with APPROVAL_DENIED.
 /// 4c. Allow path: proceed to next behavior in the pipeline.
 /// </summary>
 public sealed class ApprovalBehavior<TRequest, TResponse>
@@ -59,7 +60,8 @@ public sealed class ApprovalBehavior<TRequest, TResponse>
             ToolVersion:    cmd.ToolVersion,
             IdempotencyKey: cmd.IdempotencyKey);
 
-        // G1 — approval span (child of the tool.execute span started in AuditBehavior).
+        // Start a child span under the tool.execute span that AuditBehavior opened.
+        // This lets operators see approval latency separately from tool execution time.
         using var activity = ToolEngineTelemetry.ActivitySource.StartActivity("tool.approval.gate");
         activity?.SetTag("tool.fullName",   context.ToolFullName);
         activity?.SetTag("tenant.id",       context.TenantId);
@@ -78,11 +80,11 @@ public sealed class ApprovalBehavior<TRequest, TResponse>
         {
             activity?.SetTag("approval.decision",     "suspended");
             activity?.SetTag("approval.invocationId", decision.PendingInvocationId.ToString());
-            // G2 — increment pending approval gauge
+            // Increment gauge so operators can see in-flight approval backlogs by risk tier.
             ToolEngineTelemetry.PendingApprovalCount.Add(1,
                 new TagList
                 {
-                    { "tenant.id", context.TenantId },
+                    { "tenant.id",     context.TenantId },
                     { "approval.risk", descriptor.Value.ApprovalRisk.ToString() }
                 });
             return Suspended(cmd, decision.PendingInvocationId.Value);
@@ -93,7 +95,7 @@ public sealed class ApprovalBehavior<TRequest, TResponse>
         {
             activity?.SetTag("approval.decision", "denied");
             return Fail(cmd, new ToolError(
-                "APPROVAL_DENIED",
+                ErrorCodes.ApprovalDenied,
                 decision.Reason ?? $"Human approval was denied for tool '{context.ToolFullName}'.",
                 403));
         }

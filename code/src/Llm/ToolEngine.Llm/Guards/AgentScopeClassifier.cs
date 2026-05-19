@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using ToolEngine.Llm.Abstractions;
 using ToolEngine.Llm.Models;
 using ToolEngine.Llm.Options;
+using ToolEngine.Llm.Prompts;
 using ToolEngine.Tools.Registry;
 
 /// <summary>
@@ -15,7 +16,7 @@ using ToolEngine.Tools.Registry;
 /// domain of available tools.
 ///
 /// <para>
-/// This is the reliable enforcement layer. Unlike system-prompt-only approaches,
+/// This is the primary enforcement layer. Unlike system-prompt-only approaches,
 /// which a capable LLM often overrides with its training instinct to be helpful,
 /// a dedicated classification call returns structured JSON that the orchestrator
 /// can act on deterministically.
@@ -50,6 +51,7 @@ using ToolEngine.Tools.Registry;
 public sealed class AgentScopeClassifier
 {
     private readonly ScopeGuardOptions            _opts;
+    private readonly IPromptStore                 _prompts;
     private readonly ILogger<AgentScopeClassifier> _logger;
 
     private static readonly JsonSerializerOptions _jsonOpts = new()
@@ -59,10 +61,12 @@ public sealed class AgentScopeClassifier
 
     public AgentScopeClassifier(
         IOptions<LlmOptions>           options,
+        IPromptStore                   prompts,
         ILogger<AgentScopeClassifier>  logger)
     {
-        _opts   = options.Value.ScopeGuard;
-        _logger = logger;
+        _opts    = options.Value.ScopeGuard;
+        _prompts = prompts;
+        _logger  = logger;
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -92,7 +96,7 @@ public sealed class AgentScopeClassifier
             _logger.LogDebug("No tools available — rejecting request as fully out of scope.");
             return new ScopeClassification(
                 true, null, [],
-                "No tools are currently available. I'm unable to assist with any requests at this time.",
+                _prompts.Get(PromptKeys.AgentScopeNoToolsMessage),
                 LlmUsage.Zero);
         }
 
@@ -139,7 +143,7 @@ public sealed class AgentScopeClassifier
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private static IReadOnlyList<LlmMessage> BuildClassificationMessages(
+    private IReadOnlyList<LlmMessage> BuildClassificationMessages(
         string                        text,
         IReadOnlyList<ToolDescriptor> tools)
     {
@@ -153,18 +157,14 @@ public sealed class AgentScopeClassifier
         ];
     }
 
-    private static string BuildClassificationSystemPrompt(IReadOnlyList<ToolDescriptor> tools)
+    private string BuildClassificationSystemPrompt(IReadOnlyList<ToolDescriptor> tools)
     {
         var sb = new StringBuilder();
 
-        // Critical: the output format instruction comes first so it is in the highest-weight
-        // position of the system prompt. Models trained on RLHF weight early instructions
-        // more heavily for format compliance.
-        sb.AppendLine("OUTPUT FORMAT: Respond with ONLY a raw JSON object.");
-        sb.AppendLine("No preamble. No explanation. No markdown. No code fences. Just JSON.");
-        sb.AppendLine();
-        sb.AppendLine("You are a tool scope classifier. Your job is to determine which parts of");
-        sb.AppendLine("a user request can be fulfilled by the tools listed below.");
+        // Output format instruction comes first — RLHF-trained models weight early
+        // instructions most heavily for format compliance. Positioning it at the top
+        // maximises the chance of receiving clean JSON without preamble.
+        sb.AppendLine(_prompts.Get(PromptKeys.ScopeClassifierOutputFormat));
         sb.AppendLine();
         sb.AppendLine("AVAILABLE TOOLS:");
 
@@ -179,23 +179,7 @@ public sealed class AgentScopeClassifier
         }
 
         sb.AppendLine();
-        sb.AppendLine("FIELD RULES:");
-        sb.AppendLine("- isFullyOutOfScope: true only if NONE of the request maps to any tool.");
-        sb.AppendLine("- inScopePortion: SHORT plain-language rephrasing of ONLY the tool-addressable");
-        sb.AppendLine("  sub-requests. Do NOT mention tools, do NOT explain — just restate the question.");
-        sb.AppendLine("  Set to null only when isFullyOutOfScope is true.");
-        sb.AppendLine("- outOfScopeParts: array of SHORT plain-language descriptions of each");
-        sb.AppendLine("  sub-request that no tool can address. Empty array when nothing is out of scope.");
-        sb.AppendLine("- refusalMessage: one sentence stating what you CAN help with.");
-        sb.AppendLine("  Set only when isFullyOutOfScope is true, otherwise null.");
-        sb.AppendLine();
-        sb.AppendLine("EXAMPLE — request: \"what is 2+2 and tell me about AWS\"");
-        sb.AppendLine("{\"isFullyOutOfScope\":false,\"inScopePortion\":\"What is 2+2?\",\"outOfScopeParts\":[\"Tell me about AWS\"],\"refusalMessage\":null}");
-        sb.AppendLine();
-        sb.AppendLine("EXAMPLE — request: \"write me a poem\"");
-        sb.AppendLine("{\"isFullyOutOfScope\":true,\"inScopePortion\":null,\"outOfScopeParts\":[\"Write a poem\"],\"refusalMessage\":\"I can only help with maths, weather lookups, and user profile queries.\"}");
-        sb.AppendLine();
-        sb.AppendLine("Now classify the user request below. Output JSON only:");
+        sb.AppendLine(_prompts.Get(PromptKeys.ScopeClassifierFieldRules));
 
         return sb.ToString().TrimEnd();
     }

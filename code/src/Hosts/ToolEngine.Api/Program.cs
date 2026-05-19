@@ -16,6 +16,7 @@ using ToolEngine.Api.Middleware;
 using ToolEngine.Application.Extensions;
 using ToolEngine.Application.Telemetry;
 using ToolEngine.Core.Abstractions.Common;
+using ToolEngine.Core.Domain.Constants;
 using ToolEngine.Core.Domain.Entities;
 using ToolEngine.Infrastructure.Approval;
 using ToolEngine.Infrastructure.Extensions;
@@ -32,19 +33,17 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
 
-    // ── Serilog with PII masking (G4) ────────────────────────────────────────
+    // ── Structured logging with PII masking ──────────────────────────────────
+    // Email addresses (approver emails from the approval pipeline) are masked so they
+    // never appear in plaintext in log streams or third-party aggregators (GDPR Art. 5(1)(f)).
     builder.Host.UseSerilog((ctx, lc) => lc
         .ReadFrom.Configuration(ctx.Configuration)
         .Enrich.FromLogContext()
         .WriteTo.Console()
-        // G4 — mask email addresses in structured log properties.
-        // Prevents GDPR-regulated PII (approver email) from appearing in plaintext
-        // log streams or being shipped to third-party log aggregators.
-        //
-        // M4 fix: use a regex scoped to RFC-5321-like addresses (no spaces, has @,
-        // has a dot after @) to avoid masking tool inputs/outputs that contain '@'
-        // (e.g. npm scope "@scope/pkg", Slack "@everyone", file paths).
-        // Previous implementation matched any string containing '@', corrupting logs.
+        // Mask RFC-5321-like email addresses in structured log properties.
+        // The regex is scoped to strings that have no whitespace, contain '@',
+        // and have a dot after '@' — this avoids masking tool inputs that contain
+        // '@' but are not email addresses (e.g. npm scopes, Slack @mentions).
         .Destructure.ByTransforming<string>(s =>
         {
             // Fast-path: skip strings with no '@'.
@@ -64,10 +63,11 @@ try
         }));
 
     // ── Authentication ───────────────────────────────────────────────────────
-    var jwt = builder.Configuration.GetSection("Jwt").Get<JwtSettings>()
+    var jwt = builder.Configuration.GetSection(ConfigKeys.Jwt).Get<JwtSettings>()
               ?? throw new InvalidOperationException("Jwt settings are missing.");
 
-    // E7 — JWT key length must be ≥ 256 bits (32 bytes) for HMAC-SHA256.
+    // Enforce a minimum key length of 32 bytes (256 bits) for HMAC-SHA256.
+    // Shorter keys are vulnerable to brute-force offline attacks against captured JWTs.
     if (Encoding.UTF8.GetBytes(jwt.Secret).Length < 32)
         throw new InvalidOperationException(
             "Jwt:Secret must be at least 32 bytes (256 bits). " +
@@ -103,25 +103,25 @@ try
     builder.Services.AddToolApplication();
     builder.Services.AddToolLlm(builder.Configuration);
 
-    // ── Infrastructure — modular DB + cache provider (F1 / F3) ──────────────
-    var connStr   = builder.Configuration.GetConnectionString("Default")
+    // ── Infrastructure — modular DB + cache provider ─────────────────────────
+    var connStr   = builder.Configuration.GetConnectionString(ConfigKeys.DefaultConnection)
                    ?? "Data Source=toolengine-dev.db";
-    var dbOpts    = builder.Configuration.GetSection("Database").Get<DatabaseOptions>()
+    var dbOpts    = builder.Configuration.GetSection(ConfigKeys.Database).Get<DatabaseOptions>()
                    ?? new DatabaseOptions();
-    var cacheOpts = builder.Configuration.GetSection("Cache").Get<CacheOptions>()
+    var cacheOpts = builder.Configuration.GetSection(ConfigKeys.Cache).Get<CacheOptions>()
                    ?? new CacheOptions();
 
-    // F1 — DB provider: "sqlite" (default), "postgresql", "sqlserver"
+    // DB provider: "sqlite" (default/dev), "postgresql", "sqlserver"
     builder.Services.AddToolInfrastructure(opt =>
     {
         switch (dbOpts.Provider.ToLowerInvariant())
         {
-            case "postgresql":
-                opt.UseNpgsql(builder.Configuration.GetConnectionString("Default")
+            case ProviderNames.PostgreSql:
+                opt.UseNpgsql(builder.Configuration.GetConnectionString(ConfigKeys.DefaultConnection)
                               ?? "Host=localhost;Database=toolengine");
                 break;
-            case "sqlserver":
-                opt.UseSqlServer(builder.Configuration.GetConnectionString("Default")
+            case ProviderNames.SqlServer:
+                opt.UseSqlServer(builder.Configuration.GetConnectionString(ConfigKeys.DefaultConnection)
                                  ?? "Server=.;Database=ToolEngine;Trusted_Connection=True");
                 break;
             default: // sqlite
@@ -130,38 +130,39 @@ try
         }
     });
 
-    // F3 — Cache provider: "memory" (default/dev) or "redis" (production).
-    // Register Redis IDistributedCache + ICacheProvider before AddToolInfrastructure
-    // so the fallback inside AddToolInfrastructure skips MemoryCacheProvider.
-    if (cacheOpts.Provider.Equals("redis", StringComparison.OrdinalIgnoreCase))
+    // Cache provider: "memory" (default/dev) or "redis" (production).
+    // Redis is required when running more than one pod — memory cache is node-local.
+    // Register Redis before AddToolInfrastructure so its fallback skips MemoryCacheProvider.
+    if (cacheOpts.Provider.Equals(ProviderNames.Redis, StringComparison.OrdinalIgnoreCase))
     {
         builder.Services.AddStackExchangeRedisCache(opt =>
             opt.Configuration =
-                builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379");
+                builder.Configuration.GetConnectionString(ConfigKeys.RedisConnection) ?? "localhost:6379");
         builder.Services.AddDistributedCacheProvider();
     }
-    // Memory provider: AddToolInfrastructure registers it as a fallback if no ICacheProvider yet.
+    // Memory provider: AddToolInfrastructure registers it as a fallback if no ICacheProvider is yet registered.
 
     // ── Rate limiting ────────────────────────────────────────────────────────
-    // E3 — OTP verify endpoint: 10 attempts per IP per 10 minutes (IP-level).
-    // Per-token lockout (FailedOtpAttempts counter) handles targeted token attacks.
+    // Sliding-window rate limit on OTP verify: 10 attempts per IP per 10 minutes.
+    // A per-entity failed-attempt counter on PendingApproval handles targeted attacks
+    // against a specific approval token (OWASP MFA Cheat Sheet).
     builder.Services.AddRateLimiter(opt =>
     {
-        opt.AddPolicy("otp-verify", ctx =>
+        opt.AddPolicy(RateLimitPolicies.OtpVerify, ctx =>
             RateLimitPartition.GetSlidingWindowLimiter(
                 partitionKey: ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
                 factory: _ => new SlidingWindowRateLimiterOptions
                 {
-                    Window              = TimeSpan.FromMinutes(10),
+                    Window              = TimeSpan.FromMinutes(ServiceLimits.OtpRateLimitWindowMinutes),
                     SegmentsPerWindow   = 5,
-                    PermitLimit         = 10,
+                    PermitLimit         = ServiceLimits.OtpRateLimitPermitLimit,
                     QueueLimit          = 0
                 }));
 
         opt.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
         opt.OnRejected = async (ctx, token) =>
         {
-            ctx.HttpContext.Response.Headers["Retry-After"] = "60";
+            ctx.HttpContext.Response.Headers[HttpHeaderNames.RetryAfter] = "60";
             await ctx.HttpContext.Response.WriteAsJsonAsync(
                 new { error = "TOO_MANY_REQUESTS",
                       description = "Too many OTP verification attempts. Try again in 10 minutes." },
@@ -169,10 +170,11 @@ try
         };
     });
 
-    // ── OpenTelemetry — G1 Tracing / G2 Metrics ─────────────────────────────
-    // OTLP exporter: configure "Otlp:Endpoint" (e.g. http://otel-collector:4317).
-    // W3C traceparent/tracestate headers are propagated automatically by AspNetCore instrumentation.
-    var otlpEndpoint = builder.Configuration["Otlp:Endpoint"];
+    // ── OpenTelemetry — tracing and metrics ──────────────────────────────────
+    // W3C traceparent/tracestate headers are propagated automatically by the
+    // AspNetCore instrumentation. Configure "Otlp:Endpoint" to export to a collector
+    // (e.g. http://otel-collector:4317).
+    var otlpEndpoint = builder.Configuration[ConfigKeys.OtlpEndpoint];
 
     builder.Services
         .AddOpenTelemetry()
@@ -214,8 +216,9 @@ try
 
     var app = builder.Build();
 
-    // ── E7 — Startup security validation ────────────────────────────────────
+    // ── Startup security validation ──────────────────────────────────────────
     // Fail fast on misconfiguration before accepting any traffic.
+    // Magic links sent over HTTP expose the approval token in network traffic and logs.
     if (!app.Environment.IsDevelopment())
     {
         var approvalOpts = app.Services
@@ -226,13 +229,12 @@ try
                 "Magic links sent over HTTP are vulnerable to interception.");
     }
 
-    // ── Database init (F2) ──────────────────────────────────────────────────────
+    // ── Database init ────────────────────────────────────────────────────────
     // Development: EnsureDeleted + EnsureCreated — always rebuilds the SQLite schema
-    //   from the current model on startup. This prevents stale-schema errors (e.g.
-    //   "no such table: OutboxMessages") whenever new entities are added. Dev data
-    //   is intentionally ephemeral; use seeds or test fixtures, not the dev DB.
+    //   from the current model on startup. This prevents stale-schema errors
+    //   whenever new entities are added. Dev data is intentionally ephemeral.
     //
-    // Production:  MigrateAsync — applies pending EF Core migrations. Create the
+    // Production: MigrateAsync — applies pending EF Core migrations. Create the
     //   initial migration before first production deploy:
     //     dotnet ef migrations add InitialCreate \
     //       --project src/Infrastructure/ToolEngine.Infrastructure \
@@ -270,7 +272,7 @@ try
     }
 
     app.UseSerilogRequestLogging();
-    app.UseRateLimiter();          // E3 — must be before auth/routing
+    app.UseRateLimiter();          // Must be before auth/routing so rate limits apply to all requests
     app.UseAuthentication();
     app.UseAuthorization();
 

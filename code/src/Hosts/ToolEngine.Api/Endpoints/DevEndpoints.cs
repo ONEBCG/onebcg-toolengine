@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Text;
 using Microsoft.IdentityModel.Tokens;
 using ToolEngine.Api.Auth;
+using ToolEngine.Core.Domain.Constants;
 
 public static class DevEndpoints
 {
@@ -22,8 +23,8 @@ public static class DevEndpoints
 
     private static IResult GenerateDevToken(
         JwtSettings jwt,
-        // H1 — accept an optional tenant parameter so dev tokens are not hard-coded
-        // to "onebcg-default-tenant". Value is lowercased to match Tenant.Create() normalisation.
+        // Accept an optional tenant parameter so dev tokens are not hard-coded to "onebcg-default-tenant".
+        // Value is lowercased to match the normalisation applied by Tenant.Create().
         [Microsoft.AspNetCore.Mvc.FromQuery] string? tenant = null)
     {
         var tenantId = (tenant ?? "onebcg-default-tenant").Trim().ToLowerInvariant();
@@ -35,7 +36,7 @@ public static class DevEndpoints
         {
             new Claim(JwtRegisteredClaimNames.Sub, "dev-user"),
             new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
-            new Claim("tenant_id", tenantId),
+            new Claim(JwtClaimNames.TenantId, tenantId),
         };
 
         var token = new JwtSecurityToken(

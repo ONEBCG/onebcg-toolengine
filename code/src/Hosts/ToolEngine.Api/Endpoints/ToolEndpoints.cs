@@ -5,6 +5,7 @@ using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using ToolEngine.Application.Commands;
 using ToolEngine.Api.Streaming;
+using ToolEngine.Core.Domain.Constants;
 using ToolEngine.Core.Domain.Contracts;
 using ToolEngine.Core.Domain.Enums;
 using ToolEngine.Core.Domain.Schema;
@@ -169,12 +170,12 @@ public static class ToolEndpoints
     private static (Guid correlationId, string tenantId, string userId) ExtractContext(
         HttpContext ctx)
     {
-        var correlationId = ctx.Request.Headers.TryGetValue("X-Correlation-Id", out var hdr)
+        var correlationId = ctx.Request.Headers.TryGetValue(HttpHeaderNames.CorrelationId, out var hdr)
                             && Guid.TryParse(hdr, out var parsed)
             ? parsed
             : Guid.NewGuid();
 
-        var tenantId = ctx.User.FindFirst("tenant_id")?.Value ?? "anonymous";
+        var tenantId = ctx.User.FindFirst(JwtClaimNames.TenantId)?.Value ?? "anonymous";
         var userId   = ctx.User.FindFirst(
                            System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
                        ?? "anonymous";

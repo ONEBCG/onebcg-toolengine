@@ -2,6 +2,7 @@ namespace ToolEngine.Api.Endpoints;
 
 using Microsoft.AspNetCore.Mvc;
 using ToolEngine.Core.Abstractions.Persistence;
+using ToolEngine.Core.Domain.Constants;
 using ToolEngine.Core.Domain.Entities;
 using ToolEngine.Core.Domain.Enums;
 using ToolEngine.Infrastructure.Approval;
@@ -15,6 +16,13 @@ using ToolEngine.Infrastructure.Approval;
 /// </summary>
 public static class ApprovalEndpoints
 {
+    /// <summary>
+    /// Applied to /approvals/otp/verify when the caller supplies no ApproverUserId.
+    /// Identifies OTP-verified approvals in the audit trail without requiring the
+    /// caller to claim a user identity they may not have (e.g. CLI flows).
+    /// </summary>
+    private const string OtpVerifiedApproverIdentity = "otp-verified";
+
     public static WebApplication MapApprovalEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/approvals")
@@ -31,7 +39,7 @@ public static class ApprovalEndpoints
         group.MapPost("/otp/verify", VerifyOtp)
              .WithName("VerifyApprovalOtp")
              .WithSummary("Verify an OTP to approve a pending tool invocation.")
-             .RequireRateLimiting("otp-verify");
+             .RequireRateLimiting(RateLimitPolicies.OtpVerify);
 
         // Dashboard: authenticated approver views pending approvals for their tenant.
         group.MapGet("/pending", GetPending)
@@ -67,12 +75,12 @@ public static class ApprovalEndpoints
             tracked.Expire();
             await uow.SaveChangesAsync(ct);
             return Results.Problem("Approval request has expired.", statusCode: 410,
-                title: "APPROVAL_EXPIRED");
+                title: ErrorCodes.ApprovalExpired);
         }
 
-        // H3 — The magic-link token is the shared secret; the caller's identity is
-        // always "magic-link". Accepting DecidedByUserId from the request body would
-        // allow anyone with the URL to forge arbitrary audit identities.
+        // The magic-link token is the shared secret; the caller's identity is always "magic-link".
+        // Accepting DecidedByUserId from the request body would allow anyone with the URL to forge
+        // arbitrary audit identities — the token alone authorises the decision.
         var decidedBy = "magic-link";
 
         var result = action.ToLowerInvariant() switch
@@ -110,7 +118,7 @@ public static class ApprovalEndpoints
         var approval = await FindByTokenAsync(readRepo, body.ApprovalToken, ct);
         if (approval is null)
             return Results.Problem("Invalid or expired approval token.", statusCode: 404,
-                title: "INVALID_APPROVAL_TOKEN");
+                title: ErrorCodes.InvalidApprovalToken);
 
         var tracked = await repo.GetByIdAsync(approval.Id, ct);
         if (tracked is null)
@@ -124,29 +132,31 @@ public static class ApprovalEndpoints
             tracked.Expire();
             await uow.SaveChangesAsync(ct);
             return Results.Problem("Approval request has expired.", statusCode: 410,
-                title: "APPROVAL_EXPIRED");
+                title: ErrorCodes.ApprovalExpired);
         }
 
-        // C1+C2 — VerifyOtp re-derives PBKDF2 with the embedded salt and uses
+        // VerifyOtp re-derives PBKDF2 with the embedded salt and uses
         // CryptographicOperations.FixedTimeEquals to prevent timing-oracle attacks.
+        // The fixed-time comparison ensures an attacker cannot distinguish a wrong OTP
+        // from a wrong key-derivation parameter by measuring response latency.
         if (tracked.OtpHash is null ||
             !EmailOtpChannel.VerifyOtp(body.Otp, tracked.OtpHash))
         {
             // Increment failure counter. IncrementFailedOtpAttempts returns true
             // when the max is reached and transitions the approval to Expired.
-            var locked = tracked.IncrementFailedOtpAttempts(maxAttempts: 5);
+            var locked = tracked.IncrementFailedOtpAttempts(ServiceLimits.OtpMaxFailedAttempts);
             await uow.SaveChangesAsync(ct);
 
             return locked
                 ? Results.Problem(
                     "Maximum OTP attempts exceeded. Approval request has been invalidated.",
-                    statusCode: 410, title: "APPROVAL_EXPIRED")
+                    statusCode: 410, title: ErrorCodes.ApprovalExpired)
                 : Results.Problem(
-                    $"Invalid OTP. {5 - tracked.FailedOtpAttempts} attempt(s) remaining.",
-                    statusCode: 400, title: "INVALID_OTP");
+                    $"Invalid OTP. {ServiceLimits.OtpMaxFailedAttempts - tracked.FailedOtpAttempts} attempt(s) remaining.",
+                    statusCode: 400, title: ErrorCodes.InvalidOtp);
         }
 
-        var result = tracked.Approve(body.ApproverUserId ?? "otp-verified");
+        var result = tracked.Approve(body.ApproverUserId ?? OtpVerifiedApproverIdentity);
         if (result.IsFailure)
             return Results.Conflict(new { error = result.Error.Description });
 
@@ -166,7 +176,7 @@ public static class ApprovalEndpoints
         IReadRepository<PendingApproval, Guid> repo,
         CancellationToken                      ct)
     {
-        var tenantId = ctx.User.FindFirst("tenant_id")?.Value ?? "anonymous";
+        var tenantId = ctx.User.FindFirst(JwtClaimNames.TenantId)?.Value ?? "anonymous";
 
         var spec = new LambdaSpecification<PendingApproval>(
             a => a.TenantId == tenantId && a.Status == ApprovalStatus.Pending);

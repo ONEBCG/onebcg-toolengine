@@ -4,25 +4,30 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ToolEngine.Core.Abstractions.Security;
+using ToolEngine.Core.Domain.Constants;
 using ToolEngine.Llm.Abstractions;
 using ToolEngine.Llm.Models;
 using ToolEngine.Llm.Options;
+using ToolEngine.Llm.Prompts;
 
 public sealed class AnthropicLlmProvider : ILlmProvider
 {
-    public string ProviderName => "anthropic";
+    public string ProviderName => ProviderNames.Anthropic;
 
     private readonly IHttpClientFactory             _httpFactory;
     private readonly ISecretVault                   _secretVault;
+    private readonly IPromptStore                   _prompts;
     private readonly ILogger<AnthropicLlmProvider>  _logger;
 
     public AnthropicLlmProvider(
         IHttpClientFactory            httpFactory,
         ISecretVault                  secretVault,
+        IPromptStore                  prompts,
         ILogger<AnthropicLlmProvider> logger)
     {
         _httpFactory  = httpFactory;
         _secretVault  = secretVault;
+        _prompts      = prompts;
         _logger       = logger;
     }
 
@@ -43,13 +48,10 @@ public sealed class AnthropicLlmProvider : ILlmProvider
             return new { name = t.SanitizedName, description = t.Description, input_schema = schema };
         }).ToArray();
 
-        // Build messages — Anthropic does not support role:system in messages array;
-        // system content must go as the top-level "system" field.
-        // Extract the injected system message (AgentScopeEnforcer) from the session so the
-        // tool-scope rules, grounding constraints, and available-tool list all reach the model.
-        // Previously this was hardcoded to a generic string which silently discarded the
-        // AgentScopeEnforcer prompt — tools and scope rules were never sent.
-        var systemContent  = ExtractSystemContent(messages);
+        // Anthropic requires system content as a top-level field, not as a role:system message.
+        // Extract any injected system messages (AgentScopeEnforcer) so tool-scope rules,
+        // grounding constraints, and available-tool lists all reach the model.
+        var systemContent     = ExtractSystemContent(messages);
         var anthropicMessages = BuildAnthropicMessages(messages);
 
         // Clamp temperature to Anthropic's valid range (0.0–1.0).
@@ -65,7 +67,7 @@ public sealed class AnthropicLlmProvider : ILlmProvider
             tools       = toolsArray
         };
 
-        var http    = _httpFactory.CreateClient("anthropic");
+        var http    = _httpFactory.CreateClient(ProviderNames.Anthropic);
         var timeout = TimeSpan.FromSeconds(options.TimeoutSeconds > 0 ? options.TimeoutSeconds : 30);
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         cts.CancelAfter(timeout);
@@ -73,8 +75,8 @@ public sealed class AnthropicLlmProvider : ILlmProvider
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.anthropic.com/v1/messages");
-            request.Headers.Add("x-api-key", apiKey);
-            request.Headers.Add("anthropic-version", "2023-06-01");
+            request.Headers.Add(HttpHeaderNames.AnthropicApiKey, apiKey);
+            request.Headers.Add(HttpHeaderNames.AnthropicVersion, ProviderNames.AnthropicApiVersion);
             request.Content = JsonContent.Create(requestBody);
 
             using var response = await http.SendAsync(request, cts.Token);
@@ -90,7 +92,7 @@ public sealed class AnthropicLlmProvider : ILlmProvider
             var root  = doc.RootElement;
             var usage = ParseAnthropicUsage(root);
 
-            // H12 — Anthropic occasionally returns HTTP 200 with an error envelope
+            // Anthropic occasionally returns HTTP 200 with an error envelope
             // (e.g. overloaded_error). Guard defensively rather than letting GetProperty throw.
             if (!root.TryGetProperty("stop_reason", out var stopReasonProp))
             {
@@ -137,9 +139,10 @@ public sealed class AnthropicLlmProvider : ILlmProvider
     /// <summary>
     /// Extracts and concatenates all system-role messages into a single string for
     /// use as the Anthropic top-level <c>system</c> field.
-    /// Returns a minimal fallback when no system message is present (e.g. test stubs).
+    /// Falls back to the configured prompt when no system message is present
+    /// (e.g. test stubs or single-call classification requests).
     /// </summary>
-    private static string ExtractSystemContent(IReadOnlyList<LlmMessage> messages)
+    private string ExtractSystemContent(IReadOnlyList<LlmMessage> messages)
     {
         var parts = messages
             .Where(m => m.Role == MessageRole.System && !string.IsNullOrWhiteSpace(m.Content))
@@ -148,7 +151,7 @@ public sealed class AnthropicLlmProvider : ILlmProvider
 
         return parts.Count > 0
             ? string.Join("\n\n", parts)
-            : "You are a helpful assistant with access to tools. Use tools when appropriate.";
+            : _prompts.Get(PromptKeys.AgentFallbackSystem);
     }
 
     private static List<object> BuildAnthropicMessages(IReadOnlyList<LlmMessage> messages)

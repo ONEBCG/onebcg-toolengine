@@ -3,6 +3,7 @@ namespace ToolEngine.Infrastructure.Common;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using ToolEngine.Core.Abstractions.Common;
+using ToolEngine.Core.Domain.Constants;
 
 internal sealed class HttpContextCurrentUser : ICurrentUser
 {
@@ -15,7 +16,7 @@ internal sealed class HttpContextCurrentUser : ICurrentUser
         _accessor.HttpContext?.User;
 
     public string UserId   => Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? string.Empty;
-    public string TenantId => Principal?.FindFirst("tenant_id")?.Value               ?? string.Empty;
+    public string TenantId => Principal?.FindFirst(JwtClaimNames.TenantId)?.Value    ?? string.Empty;
     public string Email    => Principal?.FindFirst(ClaimTypes.Email)?.Value          ?? string.Empty;
     public bool   IsAuthenticated => Principal?.Identity?.IsAuthenticated ?? false;
 

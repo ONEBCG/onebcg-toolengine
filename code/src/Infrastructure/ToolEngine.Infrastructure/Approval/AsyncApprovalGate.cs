@@ -17,11 +17,12 @@ using ToolEngine.Tools.Abstractions.Interfaces;
 /// For Low risk:    auto-approves immediately (audit log only).
 /// For Medium/High: creates PendingApproval + OutboxMessage in a single SaveChangesAsync,
 ///                  returns ApprovalDecision.Suspend(). NotificationDispatchService delivers
-///                  the notification asynchronously with retry (outbox pattern — F7).
+///                  the notification asynchronously with retry (outbox pattern).
 /// For Critical:    same as Medium/High but channel is forced to EmailOtp.
 ///
-/// Idempotency (F8): if an IdempotencyKey is supplied, an existing PendingApproval matching
-/// the key + tenantId + toolFullName is returned without creating a duplicate.
+/// Idempotency: if an IdempotencyKey is supplied, an existing PendingApproval matching
+/// the key + tenantId + toolFullName is returned without creating a duplicate. This makes
+/// retried requests safe under at-least-once delivery from the agent orchestrator.
 /// </summary>
 public sealed class AsyncApprovalGate : IHumanApprovalGate
 {
@@ -32,6 +33,9 @@ public sealed class AsyncApprovalGate : IHumanApprovalGate
     private readonly ApprovalChannelSelector                _selector;
     private readonly ApprovalOptions                        _options;
     private readonly ILogger<AsyncApprovalGate>             _log;
+
+    private static readonly string EmptySerializedInput =
+        JsonSerializer.Serialize(new object());
 
     public AsyncApprovalGate(
         IRepository<PendingApproval, Guid>     repo,
@@ -67,7 +71,8 @@ public sealed class AsyncApprovalGate : IHumanApprovalGate
             return ApprovalDecision.Allow("system-auto");
         }
 
-        // F8: idempotency check — return existing pending approval if idempotency key matches.
+        // Return an existing pending approval if the idempotency key matches,
+        // preventing duplicate notifications when the caller retries the same request.
         if (context.IdempotencyKey is not null)
         {
             var existing = await FindByIdempotencyKeyAsync(
@@ -82,7 +87,7 @@ public sealed class AsyncApprovalGate : IHumanApprovalGate
         }
 
         var serializedInput = inputSummary is null
-            ? "{}"
+            ? EmptySerializedInput
             : JsonSerializer.Serialize(inputSummary);
 
         var channel = _selector.Select(context.TenantId, risk);
@@ -102,7 +107,9 @@ public sealed class AsyncApprovalGate : IHumanApprovalGate
             timeoutMinutes:   _options.ApprovalTimeoutMinutes,
             idempotencyKey:   context.IdempotencyKey);
 
-        // H3 — EU AI Act Article 14: attach structured acknowledgement for High/Critical risk.
+        // EU AI Act Article 14 §4 — High and Critical tools require an explicit
+        // acknowledgement statement recorded against the approval record.
+        // This provides the regulatory audit trail for human oversight.
         if (risk >= ApprovalRisk.High)
         {
             var ack = new AcknowledgementStatement(
@@ -116,8 +123,9 @@ public sealed class AsyncApprovalGate : IHumanApprovalGate
             pending.SetAcknowledgement(JsonSerializer.Serialize(ack));
         }
 
-        // F7: write PendingApproval + OutboxMessage atomically.
+        // Write PendingApproval + OutboxMessage atomically in a single SaveChangesAsync.
         // NotificationDispatchService reads the outbox and calls channel.SendAsync asynchronously.
+        // If the process crashes after commit, the outbox ensures delivery on next startup.
         var outbox = OutboxMessage.Create(
             pendingApprovalId: pending.Id,
             tenantId:          context.TenantId,
@@ -126,7 +134,7 @@ public sealed class AsyncApprovalGate : IHumanApprovalGate
 
         await _repo.AddAsync(pending, ct);
         await _ctx.OutboxMessages.AddAsync(outbox, ct);
-        await _uow.SaveChangesAsync(ct);   // atomic — both rows committed together
+        await _uow.SaveChangesAsync(ct);
 
         _log.LogInformation(
             "AsyncApprovalGate: suspended {Tool} (risk={Risk}) — invocationId={Id}, channel={Channel}",

@@ -3,6 +3,7 @@ namespace ToolEngine.Application.Behaviors;
 using MediatR;
 using ToolEngine.Application.Abstractions;
 using ToolEngine.Core.Abstractions.Persistence;
+using ToolEngine.Core.Domain.Constants;
 using ToolEngine.Core.Domain.Contracts;
 using ToolEngine.Core.Domain.Entities;
 
@@ -10,7 +11,7 @@ using ToolEngine.Core.Domain.Entities;
 /// Validates that the requesting tenant is active and is allowed to call the requested namespace.
 /// Runs outermost (before ValidationBehavior) — auth precedes all business logic (OWASP A01:2025).
 ///
-/// Namespace allowlist semantics (deny-by-default — F6):
+/// Namespace allowlist semantics (deny-by-default):
 ///   Empty list           → tenant cannot call any namespace.
 ///   Contains "*"         → tenant is unrestricted (all namespaces permitted).
 ///   Contains "math"      → only the "math" namespace is permitted.
@@ -38,17 +39,15 @@ public sealed class TenantAuthorizationBehavior<TRequest, TResponse>
         var tenant = await _tenants.GetByIdAsync(cmd.TenantId, ct);
 
         if (tenant is null)
-            return Fail(cmd, new ToolError("UNAUTHORIZED",
+            return Fail(cmd, new ToolError(ErrorCodes.Unauthorized,
                 $"Tenant '{cmd.TenantId}' not found.", 401));
 
         if (!tenant.IsActive)
-            return Fail(cmd, new ToolError("UNAUTHORIZED",
+            return Fail(cmd, new ToolError(ErrorCodes.Unauthorized,
                 $"Tenant '{cmd.TenantId}' is inactive.", 403));
 
-        // Namespace restriction — deny-by-default (F6):
-        //   Empty list  → deny all (no namespaces permitted).
-        //   "*" entry   → allow all.
-        //   Other entry → only that namespace is permitted.
+        // Namespace deny-by-default: a tenant with no allowlist entries cannot invoke
+        // any tool. The wildcard "*" is the explicit opt-in for unrestricted access.
         if (!string.IsNullOrWhiteSpace(cmd.ToolNamespace))
         {
             var allowed = tenant.AllowedNamespaces;
@@ -57,7 +56,7 @@ public sealed class TenantAuthorizationBehavior<TRequest, TResponse>
             if (!isUnrestricted &&
                 !allowed.Contains(cmd.ToolNamespace, StringComparer.OrdinalIgnoreCase))
             {
-                return Fail(cmd, new ToolError("UNAUTHORIZED",
+                return Fail(cmd, new ToolError(ErrorCodes.Unauthorized,
                     $"Tenant '{cmd.TenantId}' is not permitted to use namespace '{cmd.ToolNamespace}'. " +
                     "Grant access via Tenant.AllowNamespace(\"namespace\") or AllowNamespace(\"*\").",
                     403));

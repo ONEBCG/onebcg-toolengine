@@ -5,38 +5,18 @@ using MediatR;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using ToolEngine.Application.Commands;
+using ToolEngine.Core.Domain.Constants;
 using ToolEngine.Core.Domain.Enums;
 using ToolEngine.Llm.Abstractions;
 using ToolEngine.Llm.Conversion;
 using ToolEngine.Llm.Guards;
 using ToolEngine.Llm.Models;
 using ToolEngine.Llm.Options;
+using ToolEngine.Llm.Prompts;
 using ToolEngine.Tools.Registry;
 
 public sealed class AgentOrchestrator
 {
-    /// <summary>
-    /// Injected into the session as a User message immediately after each tool result,
-    /// before the LLM's summary turn. Forces the model to derive its response exclusively
-    /// from the tool output — the industry-standard "grounding constraint injection" pattern.
-    ///
-    /// <para>
-    /// This is defence in depth on top of the system prompt Rule 2. System prompt rules are
-    /// advisory; a per-turn injection is harder for the model to override because it appears
-    /// in the live conversation context immediately before the generation step.
-    /// </para>
-    /// </summary>
-    private const string GroundingReminder =
-        "Based ONLY on the tool result above, provide a concise answer to the original request. " +
-        "Do not include any information that is not present in the tool result.";
-
-    /// <summary>
-    /// Response length ratio threshold above which a grounding warning is logged.
-    /// If the LLM reply is more than 5× the character length of the tool result,
-    /// it likely contains supplemental general knowledge beyond the tool's output.
-    /// </summary>
-    private const int GroundingLengthRatioWarningThreshold = 5;
-
     private readonly IAgentSessionStore         _sessionStore;
     private readonly IProviderRouter            _router;
     private readonly IToolRegistry              _registry;
@@ -44,6 +24,7 @@ public sealed class AgentOrchestrator
     private readonly ToolGuardFilter            _guardFilter;
     private readonly AgentScopeEnforcer         _scopeEnforcer;
     private readonly AgentScopeClassifier       _scopeClassifier;
+    private readonly IPromptStore               _prompts;
     private readonly IMediator                  _mediator;
     private readonly BudgetOptions              _budget;
     private readonly ILogger<AgentOrchestrator> _logger;
@@ -56,6 +37,7 @@ public sealed class AgentOrchestrator
         ToolGuardFilter             guardFilter,
         AgentScopeEnforcer          scopeEnforcer,
         AgentScopeClassifier        scopeClassifier,
+        IPromptStore                prompts,
         IMediator                   mediator,
         IOptions<LlmOptions>        options,
         ILogger<AgentOrchestrator>  logger)
@@ -67,6 +49,7 @@ public sealed class AgentOrchestrator
         _guardFilter     = guardFilter;
         _scopeEnforcer   = scopeEnforcer;
         _scopeClassifier = scopeClassifier;
+        _prompts         = prompts;
         _mediator        = mediator;
         _budget          = options.Value.Budget;
         _logger          = logger;
@@ -82,7 +65,7 @@ public sealed class AgentOrchestrator
         CancellationToken ct)
     {
         var isSingleTurn = sessionId is null;
-        // H15 — acquire a per-session lock before reading/writing session state.
+        // Acquire a per-session lock before reading/writing session state.
         // Prevents two concurrent requests on the same multi-turn session from
         // clobbering each other's message history (last-writer-wins data loss).
         var effectiveSessionId = sessionId ?? Guid.NewGuid().ToString();
@@ -125,7 +108,7 @@ public sealed class AgentOrchestrator
         if (scopeCheck.IsFullyOutOfScope)
         {
             var refusal = scopeCheck.RefusalMessage
-                ?? "This request is outside the scope of the available tools.";
+                ?? _prompts.Get(PromptKeys.AgentScopeDefaultRefusal);
             _logger.LogInformation(
                 "Pre-flight classifier rejected request for session {SessionId} as fully out of scope. " +
                 "Classification used {Tokens} tokens.",
@@ -198,11 +181,10 @@ public sealed class AgentOrchestrator
 
                 session.AddMessage(LlmMessage.Assistant(content));
 
-                // ── Response grounding observability ──────────────────────────
-                // When a tool was invoked, the reply should be predominantly derived
-                // from the tool result. If the reply is disproportionately longer than
-                // the tool output, the LLM may have supplemented with general knowledge.
-                // Log a warning so operators can tune the grounding reminder or audit.
+                // When a tool was invoked, the reply should be predominantly derived from
+                // the tool result. A reply disproportionately longer than the tool output
+                // indicates the LLM supplemented with general knowledge. Log a warning so
+                // operators can tune the grounding reminder or schedule a review.
                 if (lastToolInvoked is not null)
                 {
                     var lastToolMsg = session.Messages.LastOrDefault(
@@ -211,7 +193,7 @@ public sealed class AgentOrchestrator
                     {
                         var toolLen  = lastToolMsg.Content.Length;
                         var replyLen = content.Length;
-                        if (toolLen > 0 && replyLen > toolLen * GroundingLengthRatioWarningThreshold)
+                        if (toolLen > 0 && replyLen > toolLen * ServiceLimits.GroundingLengthRatioWarningThreshold)
                             _logger.LogWarning(
                                 "Grounding concern on session {SessionId}: reply ({ReplyLen} chars) " +
                                 "is {Ratio}x the tool result ({ToolLen} chars) for '{Tool}'. " +
@@ -265,14 +247,15 @@ public sealed class AgentOrchestrator
 
                     var errorResult = JsonSerializer.Serialize(new
                     {
-                        error       = "TOOL_GUARD_BLOCKED",
+                        error       = ErrorCodes.ToolGuardBlocked,
                         description = $"Tool '{originalName}' is not permitted by the current guard configuration."
                     });
                     session.AddMessage(LlmMessage.ToolResult(toolCallId, errorResult));
                     continue;
                 }
 
-                // Build governance metadata — recorded on ToolInvocationRecord
+                // Build governance metadata — recorded on ToolInvocationRecord for
+                // EU AI Act traceability (which model made the call, in which session).
                 var governance = JsonSerializer.Serialize(new
                 {
                     provider  = provider.ProviderName,
@@ -280,8 +263,9 @@ public sealed class AgentOrchestrator
                     sessionId = session.SessionId
                 });
 
-                // Execute through the full MediatR pipeline (all behaviors apply).
                 // CallerType = AiAgent is NON-NEGOTIABLE — set here, never passed from outside.
+                // This ensures the audit trail correctly identifies AI-originated calls
+                // regardless of what a caller claims in the request body.
                 var executeCmd = new ExecuteToolCommand<JsonElement, JsonElement>(
                     correlationId,
                     tenantId,
@@ -326,7 +310,7 @@ public sealed class AgentOrchestrator
                 // The model sees this in its live context window and is far less likely
                 // to override it than a system prompt rule written at session start.
                 // Industry reference: RAG grounding / faithfulness enforcement pattern.
-                session.AddMessage(LlmMessage.User(GroundingReminder));
+                session.AddMessage(LlmMessage.User(_prompts.Get(PromptKeys.AgentGroundingReminder)));
                 // Continue the loop — LLM will produce a grounded summary
             }
         }

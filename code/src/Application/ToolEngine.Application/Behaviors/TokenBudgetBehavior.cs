@@ -3,17 +3,17 @@ namespace ToolEngine.Application.Behaviors;
 using MediatR;
 using ToolEngine.Application.Abstractions;
 using ToolEngine.Core.Abstractions.Persistence;
+using ToolEngine.Core.Domain.Constants;
 using ToolEngine.Core.Domain.Contracts;
 using ToolEngine.Core.Domain.Entities;
 
 /// <summary>
 /// Enforces the per-tenant MaxResponseTokens cap before the tool executes.
-/// If the command's MaxResponseTokens exceeds the tenant's configured cap the
-/// request is rejected immediately with a clear budget error.
+/// Rejects the request immediately when the command's requested token count would exceed
+/// the tenant's configured cap, preventing cost overruns before approval is triggered.
 ///
-/// Runs after TenantAuthorizationBehavior (tenant is guaranteed to exist here)
-/// and before ApprovalBehavior so we don't trigger approval for a request that
-/// would be rejected on budget anyway.
+/// TenantAuthorizationBehavior runs before this and guarantees the tenant exists.
+/// MaxResponseTokens == 0 means no cap is configured for this tenant.
 /// </summary>
 public sealed class TokenBudgetBehavior<TRequest, TResponse>
     : IPipelineBehavior<TRequest, TResponse>
@@ -33,15 +33,17 @@ public sealed class TokenBudgetBehavior<TRequest, TResponse>
             return await next();
 
         var tenant = await _tenants.GetByIdAsync(cmd.TenantId, ct);
+        // TenantAuthorizationBehavior (which runs before this) will reject unknown tenants.
+        // If tenant is null here a non-tool command slipped through — pass it on safely.
         if (tenant is null)
-            return await next(); // TenantAuthorizationBehavior will reject; pass through
+            return await next();
 
-        // MaxResponseTokens == 0 means no cap configured.
+        // MaxResponseTokens == 0 means no cap configured for this tenant.
         if (tenant.MaxResponseTokens > 0 &&
             cmd.MaxResponseTokens > tenant.MaxResponseTokens)
         {
             return Fail(cmd, new ToolError(
-                "TOKEN_BUDGET_EXCEEDED",
+                ErrorCodes.TokenBudgetExceeded,
                 $"Requested {cmd.MaxResponseTokens} tokens exceeds tenant cap " +
                 $"of {tenant.MaxResponseTokens}.",
                 400));

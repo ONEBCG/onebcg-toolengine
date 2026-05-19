@@ -1,16 +1,19 @@
 namespace ToolEngine.Llm.Guards;
 
 using System.Text;
+using ToolEngine.Llm.Prompts;
 using ToolEngine.Tools.Registry;
 
 /// <summary>
 /// Derives a system prompt for the main orchestration loop from the registered
-/// tool set. Scoped to response-quality rules only — scope classification and
+/// tool set and the configurable behavioural rules in prompts.json.
+///
+/// Scoped to response-quality rules only — scope classification and
 /// request rewriting are handled upstream by <see cref="AgentScopeClassifier"/>
 /// before this prompt is ever injected.
 ///
 /// <para>
-/// <b>Two rules injected:</b>
+/// Two rules injected (loaded from prompts.json so they can be tuned without recompile):
 /// <list type="number">
 ///   <item>
 ///     Missing parameters — ask for only the specific values required by the tool;
@@ -24,13 +27,18 @@ using ToolEngine.Tools.Registry;
 /// </para>
 ///
 /// <para>
-/// <b>Injection point:</b> the system prompt is injected as the first
+/// Injection point: the system prompt is injected as the first
 /// <c>MessageRole.System</c> message in a new session by
 /// <c>AgentOrchestrator</c>. Multi-turn sessions carry it forward automatically.
 /// </para>
 /// </summary>
 public sealed class AgentScopeEnforcer
 {
+    private readonly IPromptStore _prompts;
+
+    public AgentScopeEnforcer(IPromptStore prompts)
+        => _prompts = prompts;
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -46,12 +54,12 @@ public sealed class AgentScopeEnforcer
     {
         var sb = new StringBuilder();
 
-        sb.AppendLine("You are a tool-execution assistant. Your sole purpose is to help users");
-        sb.AppendLine("by invoking the tools listed below. You have no other function.");
+        sb.AppendLine(_prompts.Get(PromptKeys.ScopeEnforcerIntro));
         sb.AppendLine();
 
         AppendToolList(sb, tools);
-        AppendBehaviouralRules(sb);
+
+        sb.AppendLine(_prompts.Get(PromptKeys.ScopeEnforcerRules));
 
         return sb.ToString().TrimEnd();
     }
@@ -83,28 +91,5 @@ public sealed class AgentScopeEnforcer
         }
 
         sb.AppendLine();
-    }
-
-    private static void AppendBehaviouralRules(StringBuilder sb)
-    {
-        sb.AppendLine("── STRICT BEHAVIOURAL RULES ────────────────────────────────────────────────");
-        sb.AppendLine();
-        sb.AppendLine("RULE 1 — MISSING REQUIRED PARAMETERS");
-        sb.AppendLine("If you need a specific value to invoke a tool and the user has not");
-        sb.AppendLine("provided it, ask for ONLY that missing value.");
-        sb.AppendLine("— Do not ask for information the tool does not require.");
-        sb.AppendLine("— Do not guess, infer, or fabricate parameter values.");
-        sb.AppendLine("— Ask for one missing item at a time when possible.");
-        sb.AppendLine();
-        sb.AppendLine("RULE 2 — RESPONSE GROUNDING (critical — no knowledge leakage)");
-        sb.AppendLine("After receiving a tool result, your final answer MUST be derived");
-        sb.AppendLine("exclusively from the information the tool returned.");
-        sb.AppendLine("— Do NOT add facts, context, explanations, or commentary drawn from");
-        sb.AppendLine("  general knowledge or training data beyond the tool's output.");
-        sb.AppendLine("— Do NOT answer any part of the user's message that was not addressed");
-        sb.AppendLine("  by a tool result. If something was not covered by a tool, do not");
-        sb.AppendLine("  provide information about it from memory or general knowledge.");
-        sb.AppendLine("— If the tool result is insufficient to answer the question fully,");
-        sb.AppendLine("  state only what the tool returned — do not fill gaps with assumptions.");
     }
 }

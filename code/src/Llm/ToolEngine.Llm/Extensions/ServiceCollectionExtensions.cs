@@ -9,6 +9,7 @@ using ToolEngine.Llm.Conversion;
 using ToolEngine.Llm.Guards;
 using ToolEngine.Llm.Handlers;
 using ToolEngine.Llm.Options;
+using ToolEngine.Llm.Prompts;
 using ToolEngine.Llm.Providers;
 using ToolEngine.Llm.Routing;
 using ToolEngine.Llm.Session;
@@ -28,6 +29,11 @@ public static class ServiceCollectionExtensions
     {
         // Options
         services.AddOptions<LlmOptions>().Bind(configuration.GetSection("Llm"));
+
+        // Prompt store — singleton; loads prompts.json once at startup.
+        // All LLM system prompts and behavioural rules are externalised here
+        // so they can be tuned without a code recompile.
+        services.AddSingleton<IPromptStore, JsonPromptStore>();
 
         // HTTP clients — named, each provider uses its own instance
         services.AddHttpClient("anthropic");

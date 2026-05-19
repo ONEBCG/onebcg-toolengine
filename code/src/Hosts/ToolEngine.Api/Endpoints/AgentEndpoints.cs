@@ -4,6 +4,7 @@ using System.Text.Json;
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
 using ToolEngine.Api.Streaming;
+using ToolEngine.Core.Domain.Constants;
 using ToolEngine.Llm.Commands;
 
 public static class AgentEndpoints
@@ -28,10 +29,6 @@ public static class AgentEndpoints
         return app;
     }
 
-    // Maximum characters accepted in a single agent request.
-    // Limits prompt-injection surface and prevents runaway token consumption.
-    private const int MaxTextLength = 4_000;
-
     // Provider names that may appear in X-Llm-Provider.
     // Only alphanumeric + hyphens accepted; unrecognised values rejected before routing.
     private static readonly System.Text.RegularExpressions.Regex _providerNameRx =
@@ -47,14 +44,14 @@ public static class AgentEndpoints
         if (string.IsNullOrWhiteSpace(body.Text))
             return Results.BadRequest(new { error = "Text must not be empty." });
 
-        if (body.Text.Length > MaxTextLength)
+        if (body.Text.Length > ServiceLimits.AgentMaxTextLength)
             return Results.BadRequest(new
             {
-                error = $"Text exceeds maximum length of {MaxTextLength} characters."
+                error = $"Text exceeds maximum length of {ServiceLimits.AgentMaxTextLength} characters."
             });
 
         // ── Provider override header — sanitise before routing ────────────────
-        var providerOverride = ctx.Request.Headers.TryGetValue("X-Llm-Provider", out var hdr)
+        var providerOverride = ctx.Request.Headers.TryGetValue(HttpHeaderNames.LlmProviderOverride, out var hdr)
             ? hdr.ToString() : null;
 
         if (providerOverride is not null && !_providerNameRx.IsMatch(providerOverride))
@@ -79,7 +76,7 @@ public static class AgentEndpoints
         if (response.PendingInvocationId.HasValue)
         {
             var pollUrl = $"/invocations/{response.PendingInvocationId}/status";
-            ctx.Response.Headers["Retry-After"] = "10";
+            ctx.Response.Headers[HttpHeaderNames.RetryAfter] = "10";
             return Results.Accepted(pollUrl, new
             {
                 status       = "pending_approval",
@@ -147,13 +144,13 @@ public static class AgentEndpoints
             return;
         }
 
-        if (body.Text.Length > MaxTextLength)
+        if (body.Text.Length > ServiceLimits.AgentMaxTextLength)
         {
             ctx.Response.StatusCode = 400;
             return;
         }
 
-        var providerOverride = ctx.Request.Headers.TryGetValue("X-Llm-Provider", out var hdr)
+        var providerOverride = ctx.Request.Headers.TryGetValue(HttpHeaderNames.LlmProviderOverride, out var hdr)
             ? hdr.ToString() : null;
 
         if (providerOverride is not null && !_providerNameRx.IsMatch(providerOverride))
@@ -229,10 +226,10 @@ public static class AgentEndpoints
 
     private static (Guid correlationId, string tenantId, string userId) ExtractContext(HttpContext ctx)
     {
-        var correlationId = ctx.Request.Headers.TryGetValue("X-Correlation-Id", out var hdr)
+        var correlationId = ctx.Request.Headers.TryGetValue(HttpHeaderNames.CorrelationId, out var hdr)
                             && Guid.TryParse(hdr, out var parsed)
             ? parsed : Guid.NewGuid();
-        var tenantId = ctx.User.FindFirst("tenant_id")?.Value ?? "anonymous";
+        var tenantId = ctx.User.FindFirst(JwtClaimNames.TenantId)?.Value ?? "anonymous";
         var userId   = ctx.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value ?? "anonymous";
         return (correlationId, tenantId, userId);
     }
