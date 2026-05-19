@@ -52,3 +52,6 @@ lcov.info
 
 # Claude
 .claude/
+
+# Launch Settings
+launchSettings.json
