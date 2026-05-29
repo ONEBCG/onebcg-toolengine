@@ -1,0 +1,13 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Core\ToolEngine.Core.Domain\ToolEngine.Core.Domain.csproj" />
+    <ProjectReference Include="..\..\..\Core\ToolEngine.Core.Abstractions\ToolEngine.Core.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

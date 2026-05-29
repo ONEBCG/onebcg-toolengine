@@ -1,0 +1,2798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ToolEngine v2026 — B2B Payment Pipeline Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Arsenal:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --red:        #CC2222;
+      --darkgrey:   #595959;
+      --nearblack:  #222222;
+      --yellow:     #FFD700;
+      --bg:         #F5F4F2;
+      --surface:    #FFFFFF;
+      --border:     #E0DDD8;
+      --border-faint: #EDEDEA;
+      --success:    #1A7A40;
+      --warn:       #B85C00;
+      --info:       #1A4A8A;
+      --font-mono:  ui-monospace, 'Fira Code', Consolas, monospace;
+    }
+
+    html, body {
+      font-family: 'Arsenal', sans-serif;
+      font-weight: 400;
+      background: var(--bg);
+      color: var(--nearblack);
+      font-size: 15px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── Header ─────────────────────────────────────────────── */
+    header {
+      background: var(--nearblack);
+      color: #fff;
+      padding: 0 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 56px;
+      border-bottom: 3px solid var(--red);
+    }
+    header .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header .brand-name {
+      font-size: 17px;
+      letter-spacing: 0.04em;
+      color: #fff;
+    }
+    header .brand-name span { color: var(--red); }
+    header .pill {
+      background: var(--red);
+      color: #fff;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      padding: 2px 8px;
+      border-radius: 2px;
+      text-transform: uppercase;
+    }
+    header .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: #aaa;
+    }
+    #auth-indicator {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #555;
+      display: inline-block;
+      transition: background 0.3s;
+    }
+    #auth-indicator.ok  { background: #2ECC71; }
+    #auth-indicator.err { background: var(--red); }
+
+    /* ── Layout ─────────────────────────────────────────────── */
+    .layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 0;
+      min-height: calc(100vh - 56px - 45px);
+    }
+
+    /* ── Left sidebar ────────────────────────────────────────── */
+    aside {
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 28px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    aside h2 {
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--darkgrey);
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    /* Pipeline stage list */
+    .stage-list { list-style: none; }
+    .stage-list li {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 8px 0;
+      font-size: 13px;
+      color: var(--darkgrey);
+      border-bottom: 1px solid var(--border);
+      transition: color 0.2s;
+    }
+    .stage-list li:last-child { border-bottom: none; }
+    .stage-num {
+      min-width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      color: var(--darkgrey);
+      transition: all 0.2s;
+    }
+    .stage-list li.active   .stage-num { background: var(--red); border-color: var(--red); color: #fff; }
+    .stage-list li.done     .stage-num { background: var(--success); border-color: var(--success); color: #fff; }
+    .stage-list li.held     .stage-num { background: var(--yellow); border-color: #c9a800; color: var(--nearblack); }
+    .stage-list li.error    .stage-num { background: var(--red); border-color: var(--red); color: #fff; }
+    .stage-list li.active   { color: var(--nearblack); }
+    .stage-list li.done     { color: var(--success); }
+    .stage-list li.held     { color: var(--warn); }
+    .stage-list li.error    { color: var(--red); }
+    .stage-detail { flex: 1; }
+    .stage-detail .s-name { display: block; }
+    .stage-detail .s-type {
+      font-size: 10px;
+      color: #aaa;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    /* Scenario buttons */
+    .scenario-btn {
+      width: 100%;
+      padding: 9px 14px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      font-family: 'Arsenal', sans-serif;
+      font-size: 13px;
+      color: var(--nearblack);
+      cursor: pointer;
+      text-align: left;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .scenario-btn:hover { border-color: var(--red); background: #fff; }
+    .scenario-btn .sc-title { display: block; margin-bottom: 2px; }
+    .scenario-btn .sc-desc  { font-size: 11px; color: var(--darkgrey); }
+
+    /* ── Main content ────────────────────────────────────────── */
+    main {
+      padding: 28px 36px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    /* ── Card ────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 12px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card-header h3 {
+      font-size: 13px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--darkgrey);
+    }
+    .card-body { padding: 20px; }
+
+    /* ── Form ────────────────────────────────────────────────── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px 20px;
+    }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group.span2 { grid-column: span 2; }
+    label {
+      font-size: 11px;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--darkgrey);
+    }
+    input, select {
+      font-family: 'Arsenal', sans-serif;
+      font-size: 14px;
+      padding: 7px 10px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: var(--bg);
+      color: var(--nearblack);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus { border-color: var(--red); background: #fff; }
+
+    /* ── Buttons ─────────────────────────────────────────────── */
+    .btn {
+      font-family: 'Arsenal', sans-serif;
+      font-size: 13px;
+      letter-spacing: 0.04em;
+      padding: 9px 22px;
+      border-radius: 3px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.15s;
+    }
+    .btn-primary {
+      background: var(--red);
+      color: #fff;
+      border-color: var(--red);
+    }
+    .btn-primary:hover { background: #AA1A1A; border-color: #AA1A1A; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary {
+      background: transparent;
+      color: var(--nearblack);
+      border-color: var(--border);
+    }
+    .btn-secondary:hover { border-color: var(--darkgrey); }
+    .btn-success {
+      background: var(--success);
+      color: #fff;
+      border-color: var(--success);
+    }
+    .btn-success:hover { background: #155F32; }
+    .btn-warn {
+      background: var(--warn);
+      color: #fff;
+      border-color: var(--warn);
+    }
+    .btn-warn:hover { background: #8F4500; }
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    /* ── Status banner ───────────────────────────────────────── */
+    .status-banner {
+      padding: 12px 18px;
+      border-radius: 3px;
+      font-size: 13px;
+      display: none;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .status-banner.visible { display: flex; }
+    .status-banner.success { background: #EBF7EF; border: 1px solid #A3D9B5; color: var(--success); }
+    .status-banner.warning { background: #FFF8E6; border: 1px solid #F0D070; color: var(--warn); }
+    .status-banner.error   { background: #FDECEC; border: 1px solid #F0AAAA; color: var(--red); }
+    .status-banner.info    { background: #EBF0FA; border: 1px solid #A3B8E0; color: var(--info); }
+    .status-icon { font-size: 16px; line-height: 1; margin-top: 1px; }
+
+    /* ── Approval panel ──────────────────────────────────────── */
+    #approval-panel { display: none; }
+    #approval-panel.visible { display: block; }
+    .approval-token-box {
+      background: var(--nearblack);
+      color: var(--yellow);
+      padding: 12px 16px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      word-break: break-all;
+      margin: 12px 0;
+      letter-spacing: 0.03em;
+    }
+    .approval-meta {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .approval-meta .meta-item label { display: block; }
+    .approval-meta .meta-item span {
+      font-size: 13px;
+      color: var(--nearblack);
+    }
+
+    /* ── Result panel ────────────────────────────────────────── */
+    .result-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    .result-item label { display: block; }
+    .result-item .val {
+      font-size: 14px;
+      color: var(--nearblack);
+      word-break: break-all;
+    }
+    .result-item .val.success { color: var(--success); }
+    .result-item .val.error   { color: var(--red); }
+    .result-item .val.pending { color: var(--warn); }
+
+    /* ── Audit trail ─────────────────────────────────────────── */
+    .audit-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .audit-table th {
+      text-align: left;
+      font-size: 10px;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+      color: var(--darkgrey);
+      border-bottom: 1px solid var(--border);
+      padding: 6px 10px;
+    }
+    .audit-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    .audit-table tr:last-child td { border-bottom: none; }
+    .audit-table tr:hover td { background: var(--bg); }
+    .tag {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 2px;
+      font-size: 10px;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .tag.pass      { background: #EBF7EF; color: var(--success); }
+    .tag.fail      { background: #FDECEC; color: var(--red); }
+    .tag.blocked   { background: #FDECEC; color: var(--red); }
+    .tag.held      { background: #FFF8E6; color: var(--warn); }
+    .tag.pending   { background: #EBF0FA; color: var(--info); }
+    .tag.settled   { background: #EBF7EF; color: var(--success); }
+    .tag.submitted { background: #EBF0FA; color: var(--info); }
+
+    /* ── Pipeline trace ──────────────────────────────────────── */
+    .trace-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 11px 20px;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+    .trace-row:last-child { border-bottom: none; }
+    .trace-row:hover { background: var(--bg); }
+    .trace-num {
+      min-width: 26px; height: 26px;
+      border-radius: 50%;
+      background: #f0eee9;
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; color: var(--darkgrey);
+      flex-shrink: 0; margin-top: 2px;
+    }
+    .trace-num.pass    { background: var(--success); border-color: var(--success); color: #fff; }
+    .trace-num.blocked { background: var(--red);     border-color: var(--red);     color: #fff; }
+    .trace-num.held    { background: var(--yellow);  border-color: #c9a800;        color: var(--nearblack); }
+    .trace-num.pending { background: var(--info);    border-color: var(--info);    color: #fff; }
+    .trace-info { flex: 1; min-width: 0; }
+    .trace-top  { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 2px; }
+    .trace-tool { font-size: 12px; font-family: 'Courier New', monospace; color: var(--nearblack); }
+    .trace-details { font-size: 12px; color: var(--darkgrey); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 560px; }
+    .trace-time { font-size: 11px; color: #aaa; white-space: nowrap; flex-shrink: 0; margin-top: 4px; }
+
+    /* ── Log output ──────────────────────────────────────────── */
+    #log-output {
+      background: var(--nearblack);
+      color: #D4D0C8;
+      padding: 14px 16px;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      max-height: 240px;
+      overflow-y: auto;
+      display: none;
+      line-height: 1.7;
+    }
+    #log-output.visible { display: block; }
+    #log-output .log-line { display: block; }
+    #log-output .log-line.ok   { color: #6FD080; }
+    #log-output .log-line.err  { color: #F47070; }
+    #log-output .log-line.warn { color: var(--yellow); }
+    #log-output .log-line.dim  { color: #777; }
+
+    /* ── Spinner ─────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid rgba(204,34,34,0.2);
+      border-top-color: var(--red);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+      margin-left: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Divider ─────────────────────────────────────────────── */
+    hr { border: none; border-top: 1px solid var(--border); }
+
+    /* ── Responsive ──────────────────────────────────────────── */
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      aside { border-right: none; border-bottom: 1px solid var(--border); }
+      .form-grid { grid-template-columns: 1fr 1fr; }
+      .result-grid { grid-template-columns: 1fr 1fr; }
+      .approval-meta { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 560px) {
+      .form-grid { grid-template-columns: 1fr; }
+      .form-group.span2 { grid-column: span 1; }
+      main { padding: 20px 16px; }
+    }
+
+    /* ── Mode tabs ──────────────────────────────────────────── */
+    .mode-tabs {
+      display: flex;
+      background: var(--nearblack);
+      border-bottom: 2px solid #333;
+      padding: 0 32px;
+    }
+    .mode-tab {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+      padding: 10px 20px;
+      font-family: 'Arsenal', sans-serif;
+      font-size: 10px;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: #666;
+      cursor: pointer;
+      border: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      background: none;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
+      white-space: nowrap;
+    }
+    .mode-tab:hover  { color: #bbb; background: rgba(255,255,255,0.03); }
+    .mode-tab.active { color: #fff; border-bottom-color: var(--red); background: rgba(255,255,255,0.05); }
+    .tab-icon  { font-size: 15px; line-height: 1; }
+    .tab-label { display: flex; align-items: center; gap: 4px; }
+    .approval-badge {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: var(--red);
+      color: #fff;
+      border-radius: 9px;
+      font-size: 9px;
+      min-width: 15px;
+      height: 15px;
+      padding: 0 4px;
+      letter-spacing: 0;
+    }
+    .approval-badge.visible { display: inline-flex; }
+
+    /* ── Approval cards ──────────────────────────────────────────────── */
+    .approval-card {
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--yellow);
+      border-radius: 4px;
+      margin: 12px 20px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .approval-card-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .approval-tool-name {
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      color: var(--nearblack);
+      flex: 1;
+    }
+    .approval-countdown {
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      color: var(--darkgrey);
+      white-space: nowrap;
+    }
+    .approval-countdown.urgent { color: var(--red); }
+    .approval-section {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 10px 20px;
+    }
+    .approval-section:last-of-type { border-bottom: none; }
+    .approval-field label {
+      display: block;
+      font-size: 10px;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      color: var(--darkgrey);
+      margin-bottom: 2px;
+    }
+    .approval-field .val {
+      font-size: 13px;
+      color: var(--nearblack);
+    }
+    .approval-field .val.mono { font-family: 'Courier New', monospace; font-size: 11px; }
+    .ack-toggle {
+      padding: 8px 16px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      font-size: 11px;
+      color: var(--darkgrey);
+      cursor: pointer;
+      user-select: none;
+    }
+    .ack-toggle:hover { color: var(--nearblack); }
+    .ack-body {
+      display: none;
+      padding: 10px 16px;
+      background: var(--bg);
+      font-size: 11px;
+      color: var(--darkgrey);
+      border-bottom: 1px solid var(--border);
+      line-height: 1.6;
+    }
+    .ack-body.open { display: block; }
+    .approval-actions {
+      display: flex;
+      gap: 10px;
+      padding: 12px 16px;
+      justify-content: flex-end;
+    }
+
+    /* ── Tab content ────────────────────────────────────────── */
+    .tab-content         { display: none; flex-direction: column; gap: 24px; }
+    .tab-content.active  { display: flex; }
+
+    /* ── Code editor textarea ───────────────────────────────── */
+    .code-editor {
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      width: 100%;
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: var(--nearblack);
+      color: #D4D0C8;
+      resize: vertical;
+      min-height: 220px;
+      line-height: 1.6;
+      outline: none;
+    }
+    .code-editor:focus { border-color: var(--red); }
+
+    /* ── Plan results ───────────────────────────────────────── */
+    .plan-result-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 11px 20px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .plan-result-row:last-child { border-bottom: none; }
+    .plan-step-id   { font-family: 'Courier New', monospace; font-size: 12px; color: var(--nearblack); min-width: 160px; flex-shrink: 0; }
+    .plan-step-data { font-size: 11px; font-family: 'Courier New', monospace; color: var(--darkgrey); flex: 1; white-space: pre-wrap; word-break: break-all; max-height: 80px; overflow: hidden; }
+
+    /* ── Chat ───────────────────────────────────────────────── */
+    .chat-thread {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 14px;
+      padding: 20px;
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 300px;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .chat-bubble {
+      max-width: 78%;
+      padding: 12px 16px;
+      border-radius: 4px;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+    .chat-bubble.user      { align-self: flex-end; background: var(--nearblack); color: #fff; }
+    .chat-bubble.assistant { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); color: var(--nearblack); }
+    .tool-call-card {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--surface);
+      overflow: hidden;
+      font-size: 13px;
+    }
+    .tool-call-header {
+      padding: 7px 14px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .tool-call-name { font-family: var(--font-mono); color: var(--nearblack); font-size: 13px; }
+    .tool-call-body { padding: 10px 14px; display: none; }
+    .tool-call-body.open { display: block; max-height: 320px; overflow-y: auto; }
+    .tool-call-json { font-family: var(--font-mono); font-size: 13px; color: var(--darkgrey); white-space: pre-wrap; word-break: break-all; }
+
+    /* ── Thinking indicator ─────────────────────────────────── */
+    .thinking-bubble {
+      align-self: flex-start;
+      padding: 12px 18px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--darkgrey);
+    }
+    .thinking-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--darkgrey);
+      animation: thinkingPulse 1.2s infinite ease-in-out;
+    }
+    .thinking-dot:nth-child(2) { animation-delay: 0.2s; }
+    .thinking-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes thinkingPulse {
+      0%, 60%, 100% { opacity: 0.2; transform: scale(0.9); }
+      30%            { opacity: 1;   transform: scale(1.2); }
+    }
+
+    /* ── Tool calls block ────────────────────────────────────── */
+    .tool-calls-block {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--surface);
+      overflow: hidden;
+      font-size: 13px;
+    }
+    .tool-calls-header {
+      padding: 9px 16px;
+      background: var(--nearblack);
+      color: var(--surface);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 400;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .tool-call-row {
+      display: flex;
+      align-items: center;
+      padding: 9px 16px;
+      border-top: 1px solid var(--border-faint);
+      cursor: pointer;
+      transition: background 0.1s;
+      gap: 10px;
+      user-select: none;
+    }
+    .tool-call-row:hover { background: var(--bg); }
+    .tool-call-status {
+      font-size: 13px;
+      flex-shrink: 0;
+      width: 18px;
+      text-align: center;
+    }
+    .tool-call-name-text {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--nearblack);
+      flex: 1;
+    }
+    .tool-call-toggle {
+      font-size: 13px;
+      color: var(--darkgrey);
+      flex-shrink: 0;
+    }
+    .tool-call-detail {
+      display: none;
+      padding: 0 16px 14px;
+      background: var(--bg);
+      border-top: 1px solid var(--border-faint);
+    }
+    .tool-call-detail.open { display: block; max-height: 320px; overflow-y: auto; }
+    .token-usage-chip {
+      align-self: flex-start;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 400;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: var(--darkgrey);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 3px 10px;
+      margin-top: 4px;
+    }
+    .tool-call-section-label {
+      font-size: 12px;
+      font-weight: 400;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--darkgrey);
+      margin: 10px 0 4px;
+    }
+    .tool-call-json-block {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      background: var(--nearblack);
+      color: #D4D0C8;
+      padding: 10px 12px;
+      border-radius: 5px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 200px;
+      overflow-y: auto;
+      margin: 0;
+    }
+    .chat-input-row {
+      display: flex;
+      gap: 10px;
+      padding: 0 20px 20px;
+      align-items: flex-end;
+    }
+    .chat-textarea {
+      flex: 1;
+      font-family: 'Arsenal', sans-serif;
+      font-size: 14px;
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      resize: none;
+      min-height: 42px;
+      max-height: 120px;
+      background: var(--bg);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .chat-textarea:focus { border-color: var(--red); background: #fff; }
+    .chat-context-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--darkgrey);
+    }
+    .chat-tool-count {
+      background: var(--nearblack);
+      color: #fff;
+      padding: 2px 10px;
+      border-radius: 2px;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+    .example-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+    .example-chip {
+      padding: 4px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      font-size: 12px;
+      color: var(--darkgrey);
+      cursor: pointer;
+      background: var(--bg);
+      font-family: 'Arsenal', sans-serif;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .example-chip:hover { border-color: var(--red); color: var(--nearblack); }
+
+    /* ── Single tool ────────────────────────────────────────── */
+    .tool-schema-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 14px 16px;
+      font-size: 12px;
+      margin-top: 14px;
+    }
+    .tool-schema-desc { color: var(--nearblack); margin-bottom: 6px; line-height: 1.5; }
+    .tool-schema-when { color: var(--darkgrey); font-size: 11px; line-height: 1.5; font-family: 'Courier New', monospace; }
+
+    /* ── Scenario results ────────────────────────────────────── */
+    .scenario-step-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 10px 20px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .scenario-step-row:last-child { border-bottom: none; }
+    .scenario-step-id {
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      color: var(--nearblack);
+      min-width: 180px;
+      flex-shrink: 0;
+    }
+    .scenario-step-data {
+      font-size: 11px;
+      font-family: 'Courier New', monospace;
+      color: var(--darkgrey);
+      flex: 1;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 60px;
+      overflow: hidden;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────── -->
+<header>
+  <div class="brand">
+    <div class="brand-name">ONE <span>BCG</span></div>
+    <div class="pill">ToolEngine v2026</div>
+  </div>
+  <div class="status-bar">
+    <span id="auth-indicator"></span>
+    <span id="auth-label">Authenticating…</span>
+  </div>
+</header>
+
+<!-- ── Mode tabs ───────────────────────────────────────────────────── -->
+<nav class="mode-tabs">
+  <button class="mode-tab active" id="tab-btn-pipeline" onclick="switchTab('pipeline')">
+    <span class="tab-icon">⚡</span>
+    <span class="tab-label">Pipeline</span>
+  </button>
+  <button class="mode-tab" id="tab-btn-plan" onclick="switchTab('plan')">
+    <span class="tab-icon">📋</span>
+    <span class="tab-label">Tool Plan</span>
+  </button>
+  <button class="mode-tab" id="tab-btn-chat" onclick="switchTab('chat')">
+    <span class="tab-icon">🤖</span>
+    <span class="tab-label">AI Chat</span>
+  </button>
+  <button class="mode-tab" id="tab-btn-tool" onclick="switchTab('tool')">
+    <span class="tab-icon">🔧</span>
+    <span class="tab-label">Single Tool</span>
+  </button>
+  <button class="mode-tab" id="tab-btn-scenario" onclick="switchTab('scenario')">
+    <span class="tab-icon">▶</span>
+    <span class="tab-label">Scenarios</span>
+  </button>
+  <button class="mode-tab" id="tab-btn-approvals" onclick="switchTab('approvals')">
+    <span class="tab-icon">🔔</span>
+    <span class="tab-label">Approvals<span class="approval-badge" id="approval-badge">0</span></span>
+  </button>
+</nav>
+
+<div class="layout">
+
+  <!-- ── Sidebar ─────────────────────────────────────────────────── -->
+  <aside>
+
+    <div id="sidebar-pipeline">
+      <div>
+        <h2>Pipeline Stages</h2>
+        <ul class="stage-list" id="stage-list">
+          <li id="st0"><div class="stage-num">0</div><div class="stage-detail"><span class="s-name">Initiate</span><span class="s-type">Logic</span></div></li>
+          <li id="st1"><div class="stage-num">1</div><div class="stage-detail"><span class="s-name">Verify Payee</span><span class="s-type">Database</span></div></li>
+          <li id="st2"><div class="stage-num">2</div><div class="stage-detail"><span class="s-name">PPM Check</span><span class="s-type">Database</span></div></li>
+          <li id="st3"><div class="stage-num">3</div><div class="stage-detail"><span class="s-name">WHT Calculation</span><span class="s-type">Logic</span></div></li>
+          <li id="st4"><div class="stage-num">4</div><div class="stage-detail"><span class="s-name">KYC Screen</span><span class="s-type">API</span></div></li>
+          <li id="st5"><div class="stage-num">5</div><div class="stage-detail"><span class="s-name">Compile Dossier</span><span class="s-type">Composite · Approval Gate</span></div></li>
+          <li id="st6"><div class="stage-num">6</div><div class="stage-detail"><span class="s-name">Execute Payment</span><span class="s-type">API</span></div></li>
+          <li id="st7"><div class="stage-num">7</div><div class="stage-detail"><span class="s-name">Reconcile</span><span class="s-type">Database</span></div></li>
+        </ul>
+      </div>
+
+      <div>
+        <h2>Demo Scenarios</h2>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          <button class="scenario-btn" onclick="loadScenario('happy')">
+            <span class="sc-title">Happy path — approval required</span>
+            <span class="sc-desc">Acme Consulting · PPM-001 · GBP 5,000 · Passes all stages, suspended at Stage 5 for human approval</span>
+          </button>
+          <button class="scenario-btn" onclick="loadScenario('expired')">
+            <span class="sc-title">Expired PPM contract</span>
+            <span class="sc-desc">Horizon Advisory · PPM-002 · USD 10,000 · Blocked at Stage 2 — contract expired</span>
+          </button>
+          <button class="scenario-btn" onclick="loadScenario('kyc')">
+            <span class="sc-title">KYC block</span>
+            <span class="sc-desc">Risq Capital · PPM-003 · USD 1,000 · Blocked at Stage 4 — KYC screening match</span>
+          </button>
+          <button class="scenario-btn" onclick="loadScenario('overlimit')">
+            <span class="sc-title">Over transaction limit</span>
+            <span class="sc-desc">Acme Consulting · PPM-001 · GBP 300,000 · Blocked at Stage 2 — exceeds 250k single-transaction cap</span>
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <h2>Links</h2>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:13px;">
+          <a href="/swagger" target="_blank" style="color:var(--red);text-decoration:none;">Swagger / OpenAPI →</a>
+          <a href="/health" target="_blank" style="color:var(--red);text-decoration:none;">Health check →</a>
+        </div>
+      </div>
+    </div>
+
+    <div id="sidebar-plan" style="display:none">
+      <h2>Execution Modes</h2>
+      <div style="display:flex;flex-direction:column;gap:14px;font-size:13px;color:var(--darkgrey);">
+        <div>
+          <div style="color:var(--nearblack);margin-bottom:3px;">Sequential (mode: 0)</div>
+          <div style="font-size:12px;">Steps run one after another. Stops on first failure.</div>
+        </div>
+        <div>
+          <div style="color:var(--nearblack);margin-bottom:3px;">Parallel (mode: 1)</div>
+          <div style="font-size:12px;">All steps run concurrently via Task.WhenAll.</div>
+        </div>
+        <div>
+          <div style="color:var(--nearblack);margin-bottom:3px;">DAG (mode: 2)</div>
+          <div style="font-size:12px;">Steps run when all dependsOn steps have succeeded. Independent steps run in parallel.</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="sidebar-chat" style="display:none">
+      <h2>LLM Agent</h2>
+      <div style="font-size:13px;color:var(--darkgrey);line-height:1.6;display:flex;flex-direction:column;gap:10px;">
+        <div>Claude autonomously selects and calls payment tools based on your natural language message.</div>
+        <div><span id="chat-tool-count-sidebar" class="chat-tool-count" style="display:inline-block;">Loading…</span></div>
+        <div style="font-size:12px;">Requires <code style="font-size:11px;">ANTHROPIC_API_KEY</code> environment variable or <code style="font-size:11px;">Claude:ApiKey</code> in appsettings.json.</div>
+      </div>
+    </div>
+
+    <div id="sidebar-tool" style="display:none">
+      <h2>Direct Invocation</h2>
+      <div style="font-size:13px;color:var(--darkgrey);line-height:1.6;display:flex;flex-direction:column;gap:10px;">
+        <div>Calls a single registered tool directly via <code style="font-size:11px;">POST /api/v1/tools/invoke</code>.</div>
+        <div>Runs through the full MediatR behavior pipeline: Validation → Loop Detection → Approval → Audit.</div>
+      </div>
+    </div>
+<div id="sidebar-approvals" style="display:none">
+  <h2>Human Review Queue</h2>
+  <div style="font-size:13px;color:var(--darkgrey);line-height:1.6;display:flex;flex-direction:column;gap:10px;">
+    <div>Payments and tools flagged <code style="font-size:11px;">[RequiresApproval]</code> are held here until a human approves or denies them.</div>
+    <div>Approvals expire after 1 hour.</div>
+    <div style="font-size:12px;">Auto-refreshes every 30s while this tab is active.</div>
+  </div>
+</div>
+
+    <div id="sidebar-scenario" style="display:none">
+      <h2>Registered Scenarios</h2>
+      <div id="scenario-sidebar-list" style="display:flex;flex-direction:column;gap:10px;font-size:13px;color:var(--darkgrey);">
+        <div style="color:#aaa;font-size:12px;">Loading…</div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ── Main ────────────────────────────────────────────────────── -->
+  <main>
+
+    <!-- ── Tab 1: Pipeline ────────────────────────────────────────── -->
+    <div id="tab-pipeline" class="tab-content active">
+
+      <!-- Payment form -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Submit Payment</h3>
+          <button class="btn btn-secondary" onclick="resetAll()" style="font-size:12px;padding:5px 14px;">Reset</button>
+        </div>
+        <div class="card-body">
+          <form id="payment-form" onsubmit="submitPayment(event)">
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Payer Name</label>
+                <input type="text" id="payerName" value="ONE BCG UK Ltd" required />
+              </div>
+              <div class="form-group">
+                <label>Payer Jurisdiction</label>
+                <input type="text" id="payerJurisdiction" value="GB" maxlength="2" required />
+              </div>
+              <div class="form-group">
+                <label>Payer Entity ID</label>
+                <input type="text" id="payerEntityId" value="PAYER-ONEBCG-001" required />
+              </div>
+              <div class="form-group">
+                <label>Payee Reference</label>
+                <input type="text" id="payeeRef" value="Acme Consulting" required />
+              </div>
+              <div class="form-group">
+                <label>Gross Amount</label>
+                <input type="number" id="grossAmount" value="5000" min="1" step="0.01" required />
+              </div>
+              <div class="form-group">
+                <label>Currency</label>
+                <select id="currency">
+                  <option value="GBP">GBP</option>
+                  <option value="USD">USD</option>
+                  <option value="EUR">EUR</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Service Type</label>
+                <select id="serviceType">
+                  <option value="0">Management Consulting</option>
+                  <option value="1">Cloud SaaS</option>
+                  <option value="2">Software License</option>
+                  <option value="3">Contract Staffing</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>PPM ID</label>
+                <input type="text" id="ppmId" value="PPM-001" required />
+              </div>
+            </div>
+            <div class="btn-row" style="margin-top:18px;">
+              <button type="submit" class="btn btn-primary" id="submit-btn">Submit Payment</button>
+              <span id="submit-spinner" style="display:none;"><span class="spinner"></span></span>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Status banner -->
+      <div class="status-banner" id="status-banner">
+        <span class="status-icon" id="status-icon"></span>
+        <div id="status-text"></div>
+      </div>
+
+      <!-- Result panel -->
+      <div class="card" id="result-panel" style="display:none;">
+        <div class="card-header"><h3>Pipeline Result</h3></div>
+        <div class="card-body">
+          <div class="result-grid" id="result-grid"></div>
+        </div>
+      </div>
+
+      <!-- Approval panel -->
+      <div class="card" id="approval-panel">
+        <div class="card-header">
+          <h3>Human Approval Gate — Stage 5</h3>
+          <span class="tag held">Suspended · HTTP 202</span>
+        </div>
+        <div class="card-body">
+          <div class="approval-meta" id="approval-meta"></div>
+          <p style="font-size:13px;color:var(--darkgrey);margin-bottom:8px;">
+            Approval token (dev environment — token retrieved automatically):
+          </p>
+          <div class="approval-token-box" id="approval-token">Fetching token…</div>
+          <div class="btn-row">
+            <button class="btn btn-success" id="approve-btn" onclick="doApprove()">Approve &amp; Resume</button>
+            <button class="btn btn-warn" id="deny-btn" onclick="doDeny()">Deny</button>
+            <span id="approval-spinner" style="display:none;"><span class="spinner"></span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pipeline trace -->
+      <div class="card" id="audit-card" style="display:none;">
+        <div class="card-header">
+          <h3>Pipeline Trace</h3>
+          <button class="btn btn-secondary" onclick="loadAudit()" style="font-size:12px;padding:5px 14px;">Refresh</button>
+        </div>
+        <div id="trace-body"></div>
+      </div>
+
+      <!-- Log -->
+      <div class="card">
+        <div class="card-header">
+          <h3>Request Log</h3>
+          <button class="btn btn-secondary" onclick="clearLog()" style="font-size:12px;padding:5px 14px;">Clear</button>
+        </div>
+        <div class="card-body" style="padding:0 0 0 0;">
+          <div id="log-output" class="visible"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Tab 2: Tool Plan ───────────────────────────────────────── -->
+    <div id="tab-plan" class="tab-content">
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Tool Plan</h3>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn btn-secondary" onclick="loadPlanSample('sequential')" style="font-size:12px;padding:5px 12px;">Sequential</button>
+            <button class="btn btn-secondary" onclick="loadPlanSample('parallel')"   style="font-size:12px;padding:5px 12px;">Parallel</button>
+            <button class="btn btn-secondary" onclick="loadPlanSample('dag')"        style="font-size:12px;padding:5px 12px;">DAG</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <p style="font-size:12px;color:var(--darkgrey);margin-bottom:10px;">Edit the JSON below or click a sample. <code style="font-size:11px;">mode</code>: 0=Sequential · 1=Parallel · 2=DAG</p>
+          <textarea class="code-editor" id="plan-editor" rows="16"></textarea>
+          <div class="btn-row" style="margin-top:14px;">
+            <button class="btn btn-primary" id="plan-run-btn" onclick="executePlan()">Execute Plan</button>
+            <span id="plan-spinner" style="display:none;"><span class="spinner"></span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-banner" id="plan-status-banner">
+        <span class="status-icon" id="plan-status-icon"></span>
+        <div id="plan-status-text"></div>
+      </div>
+
+      <div class="card" id="plan-results-card" style="display:none;">
+        <div class="card-header"><h3>Step Results</h3></div>
+        <div id="plan-results-body"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Request Log</h3>
+          <button class="btn btn-secondary" onclick="clearPlanLog()" style="font-size:12px;padding:5px 14px;">Clear</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="plan-log-output" style="background:var(--nearblack);color:#D4D0C8;padding:14px 16px;border-radius:3px;font-family:'Courier New',monospace;font-size:12px;max-height:200px;overflow-y:auto;line-height:1.7;"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Tab 3: LLM Chat ───────────────────────────────────────── -->
+    <div id="tab-chat" class="tab-content">
+
+      <div class="card">
+        <div class="card-header"><h3>LLM Agent Chat</h3></div>
+        <div class="chat-context-bar">
+          <span>Claude has access to</span>
+          <span id="chat-tool-count" class="chat-tool-count">loading…</span>
+        </div>
+        <div class="example-chips">
+          <button class="example-chip" onclick="fillChatPrompt('Process a payment of GBP 5,000 to Acme Consulting using PPM-001')">Process payment to Acme</button>
+          <button class="example-chip" onclick="fillChatPrompt('Is Risq Capital an approved payee?')">Check Risq Capital</button>
+          <button class="example-chip" onclick="fillChatPrompt('Verify that Horizon Advisory is a valid payee')">Verify Horizon Advisory</button>
+          <button class="example-chip" onclick="fillChatPrompt('What payment tools do you have available?')">List available tools</button>
+        </div>
+        <div class="chat-thread" id="chat-thread"></div>
+        <div class="chat-input-row">
+          <textarea class="chat-textarea" id="chat-input" placeholder="Ask Claude to process a payment, check a payee, or investigate an issue…" rows="2" onkeydown="chatKeyDown(event)"></textarea>
+          <button class="btn btn-secondary" onclick="newChat()">New Chat</button>
+          <button class="btn btn-primary" id="chat-send-btn" onclick="sendChat()">Send</button>
+          <span id="chat-spinner" style="display:none;"><span class="spinner"></span></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Request Log</h3>
+          <button class="btn btn-secondary" onclick="clearChatLog()" style="font-size:12px;padding:5px 14px;">Clear</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="chat-log-output" style="background:var(--nearblack);color:#D4D0C8;padding:14px 16px;border-radius:3px;font-family:'Courier New',monospace;font-size:12px;max-height:200px;overflow-y:auto;line-height:1.7;"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- ── Tab 4: Single Tool ─────────────────────────────────────── -->
+    <div id="tab-tool" class="tab-content">
+
+      <div class="card">
+        <div class="card-header"><h3>Select Tool</h3></div>
+        <div class="card-body">
+          <div class="form-grid" style="grid-template-columns:1fr;">
+            <div class="form-group">
+              <label>Tool</label>
+              <select id="tool-select" onchange="onToolSelected()">
+                <option value="">Loading tools…</option>
+              </select>
+            </div>
+          </div>
+          <div id="tool-schema-display" class="tool-schema-card" style="display:none;">
+            <div class="tool-schema-desc" id="tool-schema-desc"></div>
+            <div class="tool-schema-when" id="tool-schema-when"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Input JSON</h3>
+          <button class="btn btn-secondary" onclick="formatToolInput()" style="font-size:12px;padding:5px 14px;">Format</button>
+        </div>
+        <div class="card-body">
+          <textarea class="code-editor" id="tool-input-editor" rows="10">{}</textarea>
+          <div class="btn-row" style="margin-top:14px;">
+            <button class="btn btn-primary" id="tool-invoke-btn" onclick="invokeTool()">Invoke Tool</button>
+            <span id="tool-spinner" style="display:none;"><span class="spinner"></span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-banner" id="tool-status-banner">
+        <span class="status-icon" id="tool-status-icon"></span>
+        <div id="tool-status-text"></div>
+      </div>
+
+      <div class="card" id="tool-response-card" style="display:none;">
+        <div class="card-header"><h3>Response</h3></div>
+        <div class="card-body" style="padding:0;">
+          <pre id="tool-response-body" style="font-family:'Courier New',monospace;font-size:12px;color:var(--nearblack);background:var(--bg);padding:16px 20px;overflow-x:auto;white-space:pre-wrap;word-break:break-all;margin:0;"></pre>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Request Log</h3>
+          <button class="btn btn-secondary" onclick="clearToolLog()" style="font-size:12px;padding:5px 14px;">Clear</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="tool-log-output" style="background:var(--nearblack);color:#D4D0C8;padding:14px 16px;border-radius:3px;font-family:'Courier New',monospace;font-size:12px;max-height:200px;overflow-y:auto;line-height:1.7;"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Tab 5: Scenarios -->
+    <div id="tab-scenario" class="tab-content">
+
+      <div class="card">
+        <div class="card-header"><h3>Select Scenario</h3></div>
+        <div class="card-body">
+          <div class="form-grid" style="grid-template-columns:1fr;">
+            <div class="form-group">
+              <label>Scenario</label>
+              <select id="scenario-select" onchange="onScenarioSelected()">
+                <option value="">Loading scenarios…</option>
+              </select>
+            </div>
+          </div>
+          <div id="scenario-schema-display" class="tool-schema-card" style="display:none;">
+            <div class="tool-schema-desc" id="scenario-schema-desc"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Input</h3>
+          <button class="btn btn-secondary" onclick="formatScenarioInput()" style="font-size:12px;padding:5px 14px;">Format</button>
+        </div>
+        <div class="card-body">
+          <textarea class="code-editor" id="scenario-input-editor" rows="8">{}</textarea>
+          <div class="btn-row" style="margin-top:14px;">
+            <button class="btn btn-primary" id="scenario-run-btn" onclick="runScenario()">Run Scenario</button>
+            <span id="scenario-spinner" style="display:none;"><span class="spinner"></span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="status-banner" id="scenario-status-banner">
+        <span class="status-icon" id="scenario-status-icon"></span>
+        <div id="scenario-status-text"></div>
+      </div>
+
+      <!-- Approval panel for suspended scenarios -->
+      <div class="card" id="scenario-approval-panel" style="display:none;">
+        <div class="card-header">
+          <h3>Approval Gate — Scenario Suspended</h3>
+          <span class="tag held">Suspended · HTTP 202</span>
+        </div>
+        <div class="card-body">
+          <div class="approval-meta" id="scenario-approval-meta"></div>
+          <p style="font-size:13px;color:var(--darkgrey);margin-bottom:8px;">
+            Approval token (dev environment):
+          </p>
+          <div class="approval-token-box" id="scenario-approval-token">Fetching token…</div>
+          <div class="btn-row">
+            <button class="btn btn-success" id="scenario-approve-btn" onclick="doScenarioApprove()">Approve &amp; Resume</button>
+            <button class="btn btn-warn" id="scenario-deny-btn" onclick="doScenarioDeny()">Deny</button>
+            <span id="scenario-approval-spinner" style="display:none;"><span class="spinner"></span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="scenario-results-card" style="display:none;">
+        <div class="card-header"><h3>Step Results</h3></div>
+        <div id="scenario-results-body"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Request Log</h3>
+          <button class="btn btn-secondary" onclick="clearScenarioLog()" style="font-size:12px;padding:5px 14px;">Clear</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="scenario-log-output" style="background:var(--nearblack);color:#D4D0C8;padding:14px 16px;border-radius:3px;font-family:'Courier New',monospace;font-size:12px;max-height:200px;overflow-y:auto;line-height:1.7;"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Tab 6: Approvals -->
+    <div id="tab-approvals" class="tab-content">
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Pending Approvals</h3>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <span id="approvals-refresh-time" style="font-size:11px;color:var(--darkgrey);"></span>
+            <button class="btn btn-secondary" onclick="loadApprovals()" style="font-size:12px;padding:5px 14px;">Refresh</button>
+          </div>
+        </div>
+        <div id="approvals-body">
+          <div style="padding:24px 20px;font-size:13px;color:#aaa;text-align:center;">Switch to this tab to load pending approvals.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3>Request Log</h3>
+          <button class="btn btn-secondary" onclick="clearApprovalsLog()" style="font-size:12px;padding:5px 14px;">Clear</button>
+        </div>
+        <div class="card-body" style="padding:0;">
+          <div id="approvals-log-output" style="background:var(--nearblack);color:#D4D0C8;padding:14px 16px;border-radius:3px;font-family:'Courier New',monospace;font-size:12px;max-height:200px;overflow-y:auto;line-height:1.7;"></div>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let API_BASE_URL      = '';  // set from /config on DOMContentLoaded
+let JWT               = null;
+let currentPrid       = null;
+let currentApprovalId = null;
+let currentToken      = null;
+
+const serviceTypeMap = { 0:'ManagementConsulting', 1:'CloudSaas', 2:'SoftwareLicense', 3:'ContractStaffing' };
+const callerTypeMap  = { 0:'Human', 1:'Agent' };
+const stageToolMap   = {
+  0: 'payment.initiate · v1',
+  1: 'payment.verify-payee · v1',
+  2: 'payment.ppm-check · v1',
+  3: 'payment.calculate-wht · v1',
+  4: 'payment.kyc-screen · v1',
+  5: 'payment.compile-dossier · v1',
+  6: 'payment.execute-payment · v1',
+  7: 'payment.reconcile · v1',
+};
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  // Fetch API base URL from the UI server config endpoint.
+  // Allows UI and API to run on different origins / hosts.
+  try {
+    const cfg    = await fetch('/config').then(r => r.json());
+    API_BASE_URL = cfg.apiBaseUrl ?? '';
+  } catch(e) {
+    API_BASE_URL = ''; // fallback: same origin
+  }
+
+  log('dim', '── ToolEngine v2026 B2B Payment Pipeline Demo ──────────────');
+  log('dim', `API: ${API_BASE_URL || '(same origin)'}`);
+  log('dim', 'Requesting dev JWT…');
+  await acquireToken();
+  loadPlanSample('sequential');
+});
+
+async function acquireToken() {
+  try {
+    const res = await fetch(`${API_BASE_URL}/dev/token`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ userId:'demo-user', userName:'Demo User' }),
+    });
+    const data = await res.json();
+    JWT = data.token;
+    document.getElementById('auth-indicator').className = 'ok';
+    document.getElementById('auth-label').textContent   = 'Authenticated — demo-user';
+    log('ok', `JWT acquired (expires ${new Date(data.expires).toLocaleTimeString()})`);
+    // Pre-load approval badge count
+    setTimeout(loadApprovals, 500);
+  } catch(e) {
+    document.getElementById('auth-indicator').className = 'err';
+    document.getElementById('auth-label').textContent   = 'Auth failed';
+    log('err', `Failed to acquire JWT: ${e.message}`);
+  }
+}
+
+// ── Scenarios ──────────────────────────────────────────────────────────────────
+const scenarios = {
+  happy:     { payerName:'ONE BCG UK Ltd', payerJurisdiction:'GB', payerEntityId:'PAYER-ONEBCG-001', payeeRef:'Acme Consulting',  grossAmount:5000,   currency:'GBP', serviceType:0, ppmId:'PPM-001' },
+  expired:   { payerName:'ONE BCG UK Ltd', payerJurisdiction:'GB', payerEntityId:'PAYER-ONEBCG-001', payeeRef:'Horizon Advisory', grossAmount:10000,  currency:'USD', serviceType:0, ppmId:'PPM-002' },
+  kyc:       { payerName:'ONE BCG UK Ltd', payerJurisdiction:'GB', payerEntityId:'PAYER-ONEBCG-001', payeeRef:'Risq Capital',     grossAmount:1000,   currency:'USD', serviceType:0, ppmId:'PPM-003' },
+  overlimit: { payerName:'ONE BCG UK Ltd', payerJurisdiction:'GB', payerEntityId:'PAYER-ONEBCG-001', payeeRef:'Acme Consulting',  grossAmount:300000, currency:'GBP', serviceType:0, ppmId:'PPM-001' },
+};
+
+function loadScenario(key) {
+  const sc = scenarios[key];
+  if (!sc) return;
+  document.getElementById('payerName').value        = sc.payerName;
+  document.getElementById('payerJurisdiction').value= sc.payerJurisdiction;
+  document.getElementById('payerEntityId').value    = sc.payerEntityId;
+  document.getElementById('payeeRef').value         = sc.payeeRef;
+  document.getElementById('grossAmount').value      = sc.grossAmount;
+  document.getElementById('currency').value         = sc.currency;
+  document.getElementById('serviceType').value      = sc.serviceType;
+  document.getElementById('ppmId').value            = sc.ppmId;
+  resetPanels();
+  log('dim', `─── Scenario loaded: ${key} ───────────────────────────────`);
+}
+
+// ── Submit payment ─────────────────────────────────────────────────────────────
+async function submitPayment(e) {
+  e.preventDefault();
+  if (!JWT) { showBanner('error', '⚠', 'No JWT. Reload the page.'); return; }
+
+  resetPanels();
+  setStageAll('');
+
+  const payload = {
+    payerName:         document.getElementById('payerName').value.trim(),
+    payerJurisdiction: document.getElementById('payerJurisdiction').value.trim().toUpperCase(),
+    payerEntityId:     document.getElementById('payerEntityId').value.trim(),
+    payeeRef:          document.getElementById('payeeRef').value.trim(),
+    grossAmount:       parseFloat(document.getElementById('grossAmount').value),
+    currency:          document.getElementById('currency').value,
+    serviceType:       parseInt(document.getElementById('serviceType').value),
+    ppmId:             document.getElementById('ppmId').value.trim(),
+    callerType:        0,
+  };
+
+  log('dim', '── POST /api/v1/payments ─────────────────────────────────');
+  log('', `Payload: ${JSON.stringify(payload, null, 0)}`);
+
+  setSubmitting(true);
+  setStage(0, 'active');
+
+  try {
+    const res = await apiFetch('POST', '/api/v1/payments', payload);
+    const data = await res.json();
+
+    log('', `HTTP ${res.status}: ${JSON.stringify(data, null, 0)}`);
+
+    if (res.status === 202) {
+      // Pipeline suspended at Stage 5 — approval required
+      markStagesDone(0, 5);
+      setStage(5, 'held');
+      currentPrid       = data.prid;
+      currentApprovalId = data.pendingApprovalId;
+
+      showBanner('warning', '⏸',
+        `Stage 5 approval required. Payment suspended (PRID: ${data.prid}). Approval request: ${data.pendingApprovalId}`);
+
+      showResult([
+        ['PRID',         data.prid,            ''],
+        ['Status',       data.status,           'pending'],
+        ['Stage Reached',data.stageReached,     ''],
+        ['Approval ID',  data.pendingApprovalId,'pending'],
+        ['Approval Tier',data.approvalTier ?? '—', ''],
+        ['Message',      data.message,          ''],
+      ]);
+
+      await showApprovalPanel(data.pendingApprovalId, data.prid);
+
+      // Auto-fetch trace for stages 0-5 that completed before the approval gate
+      document.getElementById('audit-card').style.display = 'block';
+      await loadAudit();
+
+    } else if (res.ok) {
+      // All 8 stages complete
+      markStagesDone(0, 7);
+      currentPrid = data.prid;
+
+      showBanner('success', '✓', `Payment completed. PRID: ${data.prid} — ${data.message}`);
+      showResult([
+        ['PRID',         data.prid,       'success'],
+        ['Status',       data.status,     'success'],
+        ['Stage Reached',data.stageReached, ''],
+        ['Message',      data.message,    ''],
+      ]);
+
+      if (data.prid) {
+        document.getElementById('audit-card').style.display = 'block';
+        await loadAudit();
+      }
+
+    } else {
+      // Pipeline blocked at a stage
+      const stage = data.stageReached ?? 0;
+      markStagesDone(0, stage - 1);
+      setStage(stage, 'error');
+      currentPrid = data.prid;
+
+      showBanner('error', '✕',
+        `Blocked at Stage ${stage}: ${data.errorCode ?? data.status} — ${data.message}`);
+      showResult([
+        ['PRID',         data.prid,       ''],
+        ['Status',       data.status,     'error'],
+        ['Stage Reached',data.stageReached, ''],
+        ['Error Code',   data.errorCode ?? '—', 'error'],
+        ['Message',      data.message,    ''],
+      ]);
+
+      if (data.prid) {
+        document.getElementById('audit-card').style.display = 'block';
+        await loadAudit();
+      }
+    }
+  } catch(err) {
+    log('err', `Network error: ${err.message}`);
+    showBanner('error', '✕', `Network error: ${err.message}`);
+  } finally {
+    setSubmitting(false);
+  }
+}
+
+// ── Approval flow ──────────────────────────────────────────────────────────────
+async function showApprovalPanel(approvalId, prid) {
+  const panel = document.getElementById('approval-panel');
+  panel.classList.add('visible');
+
+  // Fetch approval details
+  let detail = null;
+  try {
+    const r = await apiFetch('GET', `/api/v1/approvals/${approvalId}`);
+    detail   = await r.json();
+  } catch(e) {}
+
+  const meta = document.getElementById('approval-meta');
+  meta.innerHTML = `
+    <div class="meta-item"><label>Approval ID</label><span>${approvalId}</span></div>
+    <div class="meta-item"><label>Risk Level</label><span>${detail?.risk ?? '—'}</span></div>
+    <div class="meta-item"><label>Channel</label><span>${detail?.channel ?? '—'}</span></div>
+    <div class="meta-item"><label>Tool</label><span>${detail?.toolFullName ?? 'payment.compile-approval-dossier'}</span></div>
+    <div class="meta-item"><label>Expires</label><span>${detail?.expiresAt ? new Date(detail.expiresAt).toLocaleString() : '—'}</span></div>
+    <div class="meta-item"><label>PRID</label><span>${prid ?? '—'}</span></div>`;
+
+  // Dev: fetch raw token
+  try {
+    const tr = await apiFetch('GET', `/api/v1/approvals/${approvalId}/token`);
+    const td = await tr.json();
+    currentToken = td.approvalToken;
+    document.getElementById('approval-token').textContent = td.approvalToken;
+    log('warn', `[DEV] Approval token: ${td.approvalToken}`);
+  } catch(e) {
+    document.getElementById('approval-token').textContent = 'Token unavailable (dev endpoint only)';
+    log('err', `Could not fetch approval token: ${e.message}`);
+  }
+}
+
+async function doApprove() {
+  if (!currentApprovalId || !currentToken) { log('err','No approval context.'); return; }
+  setApproving(true);
+
+  try {
+    log('dim', `── POST /api/v1/approvals/${currentApprovalId}/approve ──────`);
+    const r = await apiFetch('POST', `/api/v1/approvals/${currentApprovalId}/approve`,
+      { approvalToken: currentToken });
+    const d = await r.json();
+    log(r.ok ? 'ok' : 'err', `HTTP ${r.status}: ${JSON.stringify(d)}`);
+
+    if (!r.ok) {
+      showBanner('error', '✕', `Approval failed: ${d.error ?? JSON.stringify(d)}`);
+      return;
+    }
+
+    log('ok', 'Approval granted — resuming pipeline (Stages 6-7)…');
+    showBanner('info', '↻', 'Approval granted. Running Stages 6–7…');
+
+    // Resume pipeline
+    const rr = await apiFetch('POST', `/api/v1/payments/${currentPrid}/resume`);
+    const rd = await rr.json();
+    log(rr.ok ? 'ok' : 'err', `HTTP ${rr.status}: ${JSON.stringify(rd)}`);
+
+    document.getElementById('approval-panel').classList.remove('visible');
+
+    if (rr.ok) {
+      setStage(5, 'done');
+      setStage(6, 'done');
+      setStage(7, 'done');
+      showBanner('success', '✓', `Payment completed. PRID: ${currentPrid} — ${rd.message ?? 'Pipeline complete.'}`);
+      showResult([
+        ['PRID',        currentPrid,      'success'],
+        ['Status',      rd.status,        'success'],
+        ['Message',     rd.message,       ''],
+      ]);
+    } else {
+      showBanner('error', '✕', `Resume failed: ${rd.errorCode ?? ''} — ${rd.message ?? JSON.stringify(rd)}`);
+      showResult([
+        ['PRID',       currentPrid,    ''],
+        ['Status',     rd.status,      'error'],
+        ['Error Code', rd.errorCode,   'error'],
+        ['Message',    rd.message,     ''],
+      ]);
+    }
+
+    document.getElementById('audit-card').style.display = 'block';
+    await loadAudit();
+
+  } catch(e) {
+    log('err', `Error: ${e.message}`);
+    showBanner('error', '✕', e.message);
+  } finally {
+    setApproving(false);
+  }
+}
+
+async function doDeny() {
+  if (!currentApprovalId) return;
+  setApproving(true);
+  try {
+    log('dim', `── POST /api/v1/approvals/${currentApprovalId}/deny ─────────`);
+    const r = await apiFetch('POST', `/api/v1/approvals/${currentApprovalId}/deny`,
+      { reason: 'Denied via demo UI.' });
+    const d = await r.json();
+    log(r.ok ? 'warn' : 'err', `HTTP ${r.status}: ${JSON.stringify(d)}`);
+    document.getElementById('approval-panel').classList.remove('visible');
+    setStage(5, 'error');
+    showBanner('warning', '✕', 'Approval denied. Payment will not proceed to execution.');
+  } catch(e) {
+    log('err', e.message);
+  } finally {
+    setApproving(false);
+  }
+}
+
+// ── Pipeline trace ─────────────────────────────────────────────────────────────
+function outcomeTagClass(outcome) {
+  if (!outcome) return 'pending';
+  const o = outcome.toUpperCase();
+  if (o === 'PASS' || o === 'SETTLED')   return 'pass';
+  if (o === 'SUBMITTED')                  return 'submitted';
+  if (o === 'BLOCKED')                    return 'blocked';
+  if (o.startsWith('HELD'))               return 'held';
+  if (o === 'PENDING' || o === 'PENDING_APPROVAL') return 'pending';
+  return 'pending';
+}
+
+function outcomeNumClass(outcome) {
+  if (!outcome) return '';
+  const o = outcome.toUpperCase();
+  if (o === 'PASS' || o === 'SETTLED' || o === 'SUBMITTED') return 'pass';
+  if (o === 'BLOCKED') return 'blocked';
+  if (o.startsWith('HELD') || o === 'PENDING' || o === 'PENDING_APPROVAL') return 'held';
+  return '';
+}
+
+async function loadAudit() {
+  if (!currentPrid) return;
+  const container = document.getElementById('trace-body');
+  container.innerHTML = '<div style="padding:16px 20px;font-size:12px;color:#aaa;">Loading…</div>';
+  try {
+    const r    = await apiFetch('GET', `/api/v1/payments/${currentPrid}/audit`);
+    const rows = await r.json();
+
+    if (!rows || rows.length === 0) {
+      container.innerHTML = '<div style="padding:16px 20px;font-size:12px;color:#aaa;">No trace records yet.</div>';
+      return;
+    }
+
+    container.innerHTML = rows.map(row => {
+      // row fields: stage, stageName, outcome, details, actorId, enteredAt
+      const tagCls  = outcomeTagClass(row.outcome);
+      const numCls  = outcomeNumClass(row.outcome);
+      const numChar = tagCls === 'pass' ? '✓' : tagCls === 'blocked' ? '✕' : (row.stage ?? '?');
+      const toolName = stageToolMap[row.stage] ?? `stage-${row.stage}`;
+      const time     = row.enteredAt ? new Date(row.enteredAt).toLocaleTimeString() : '—';
+      const details  = (row.details ?? '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      return `
+        <div class="trace-row">
+          <div class="trace-num ${numCls}">${numChar}</div>
+          <div class="trace-info">
+            <div class="trace-top">
+              <span class="trace-tool">${toolName}</span>
+              <span class="tag ${tagCls}">${row.outcome ?? '—'}</span>
+            </div>
+            <div class="trace-details" title="${details}">${details || '—'}</div>
+          </div>
+          <div class="trace-time">${time}</div>
+        </div>`;
+    }).join('');
+
+  } catch(e) {
+    container.innerHTML = `<div style="padding:16px 20px;font-size:12px;color:var(--red);">Trace load failed: ${e.message}</div>`;
+    log('err', `Trace load failed: ${e.message}`);
+  }
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function apiFetch(method, path, body) {
+  const opts = {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${JWT}`,
+    },
+  };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  return fetch(`${API_BASE_URL}${path}`, opts);
+}
+
+function log(cls, msg) {
+  const el = document.getElementById('log-output');
+  const line = document.createElement('span');
+  line.className = `log-line ${cls}`;
+  line.textContent = `[${new Date().toISOString().slice(11,23)}] ${msg}`;
+  el.appendChild(line);
+  el.appendChild(document.createTextNode('\n'));
+  el.scrollTop = el.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('log-output').innerHTML = '';
+}
+
+function showBanner(type, icon, text) {
+  const b = document.getElementById('status-banner');
+  b.className = `status-banner visible ${type}`;
+  document.getElementById('status-icon').textContent = icon;
+  document.getElementById('status-text').textContent = text;
+}
+
+function showResult(rows) {
+  const panel = document.getElementById('result-panel');
+  const grid  = document.getElementById('result-grid');
+  panel.style.display = 'block';
+  grid.innerHTML = rows.map(([label, val, cls]) =>
+    `<div class="result-item">
+       <label>${label}</label>
+       <div class="val ${cls}">${val ?? '—'}</div>
+     </div>`
+  ).join('');
+}
+
+function setStage(n, state) {
+  const el = document.getElementById(`st${n}`);
+  if (!el) return;
+  el.className = state;
+  const numEl = el.querySelector('.stage-num');
+  if (state === 'done')  numEl.textContent = '✓';
+  else if (state === 'error') numEl.textContent = '✕';
+  else numEl.textContent = n;
+}
+
+function setStageAll(state) {
+  for (let i = 0; i <= 7; i++) {
+    const el = document.getElementById(`st${i}`);
+    if (el) { el.className = ''; el.querySelector('.stage-num').textContent = i; }
+  }
+}
+
+function markStagesDone(from, to) {
+  for (let i = from; i <= to; i++) setStage(i, 'done');
+}
+
+function setSubmitting(on) {
+  document.getElementById('submit-btn').disabled = on;
+  document.getElementById('submit-spinner').style.display = on ? 'inline' : 'none';
+}
+
+function setApproving(on) {
+  document.getElementById('approve-btn').disabled = on;
+  document.getElementById('deny-btn').disabled    = on;
+  document.getElementById('approval-spinner').style.display = on ? 'inline' : 'none';
+}
+
+function resetPanels() {
+  document.getElementById('status-banner').className = 'status-banner';
+  document.getElementById('result-panel').style.display = 'none';
+  document.getElementById('approval-panel').classList.remove('visible');
+  document.getElementById('audit-card').style.display = 'none';
+  document.getElementById('trace-body').innerHTML = '';
+  document.getElementById('approval-token').textContent = 'Fetching token…';
+  currentPrid = null; currentApprovalId = null; currentToken = null;
+}
+
+function resetAll() {
+  resetPanels();
+  setStageAll('');
+  log('dim', '── Reset ─────────────────────────────────────────────────');
+}
+
+// ── Tab switching ──────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.mode-tab').forEach(el => el.classList.remove('active'));
+  document.getElementById(`tab-${tab}`).classList.add('active');
+  document.getElementById(`tab-btn-${tab}`).classList.add('active');
+
+  ['pipeline','plan','chat','tool','scenario','approvals'].forEach(t => {
+    const sb = document.getElementById(`sidebar-${t}`);
+    if (sb) sb.style.display = t === tab ? '' : 'none';
+  });
+
+  if (tab === 'chat' || tab === 'tool') loadToolList();
+  if (tab === 'scenario') loadScenarioList();
+  if (tab === 'approvals') {
+    loadApprovals();
+    if (!window._approvalsTimer) window._approvalsTimer = setInterval(loadApprovals, 30000);
+  } else {
+    if (window._approvalsTimer) { clearInterval(window._approvalsTimer); window._approvalsTimer = null; }
+  }
+}
+
+// ── Shared tool list (loaded once, shared across Chat and Single Tool tabs) ────
+let toolListCache = null;
+
+async function loadToolList() {
+  if (toolListCache) { applyToolList(toolListCache); return; }
+  try {
+    const r    = await apiFetch('GET', '/api/v1/tools');
+    const list = await r.json();
+    toolListCache = list;
+    applyToolList(list);
+  } catch(e) {
+    logTo('tool-log-output', 'err', `Failed to load tools: ${e.message}`);
+  }
+}
+
+function applyToolList(tools) {
+  // Chat sidebar badge
+  const countText   = `${tools.length} payment tool${tools.length !== 1 ? 's' : ''}`;
+  const chatCount   = document.getElementById('chat-tool-count');
+  const sideCount   = document.getElementById('chat-tool-count-sidebar');
+  if (chatCount) chatCount.textContent = countText;
+  if (sideCount) sideCount.textContent = countText;
+
+  // Single tool dropdown
+  const sel = document.getElementById('tool-select');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— select a tool —</option>' +
+    tools.map(t =>
+      `<option value="${escHtml(t.fullName)}"
+               data-desc="${escHtml(t.description ?? '')}"
+               data-schema="${escHtml(JSON.stringify(t.inputSchema ?? {}))}">${escHtml(t.fullName)} (${escHtml(t.version)})</option>`
+    ).join('');
+}
+
+function onToolSelected() {
+  const sel    = document.getElementById('tool-select');
+  const opt    = sel.options[sel.selectedIndex];
+  const card   = document.getElementById('tool-schema-display');
+  if (!sel.value) { card.style.display = 'none'; return; }
+  document.getElementById('tool-schema-desc').textContent = opt?.dataset?.desc ?? '';
+  document.getElementById('tool-schema-when').textContent = opt?.dataset?.schema ?? '{}';
+  card.style.display = 'block';
+  document.getElementById('tool-input-editor').value = '{}';
+}
+
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Shared per-tab logger ──────────────────────────────────────────────────────
+function logTo(elementId, cls, msg) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  const colors = { ok:'#6FD080', err:'#F47070', warn:'#FFD700', dim:'#777' };
+  const line   = document.createElement('span');
+  line.style.display = 'block';
+  line.style.color   = colors[cls] ?? '#D4D0C8';
+  line.textContent   = `[${new Date().toISOString().slice(11,23)}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── Tool Plan ──────────────────────────────────────────────────────────────────
+// outputMappings wire step outputs into subsequent step inputs at runtime:
+// { "targetField": "sourceStepId.sourceField" }
+// Placeholders (00000000...) are always overridden before a step executes.
+const planSamples = {
+  // Sequential: initiate → verify-payee. PRID mapped from step-1 into step-2.
+  sequential: {
+    planId: 'aaaaaaaa-0000-0000-0000-000000000000', mode: 0,
+    steps: [
+      { stepId: 'step-1-initiate',
+        namespace: 'payment', toolName: 'initiate', version: 'v1',
+        input: { payerName:'ONE BCG UK Ltd', payerJurisdiction:'GB', payerEntityId:'PAYER-ONEBCG-001',
+                 payeeRef:'Acme Consulting', grossAmount:5000, currency:'GBP',
+                 serviceType:'ManagementConsulting', ppmId:'PPM-001', initiatorId:'plan-demo' },
+        dependsOn: [], outputMappings: {} },
+      { stepId: 'step-2-verify-payee',
+        namespace: 'payment', toolName: 'verify-payee', version: 'v1',
+        input: { paymentId:'00000000-0000-0000-0000-000000000000', payeeRef:'Acme Consulting' },
+        dependsOn: ['step-1-initiate'],
+        outputMappings: { paymentId: 'step-1-initiate.prid' } },
+    ],
+  },
+  // Parallel: two independent payment initiations running concurrently.
+  parallel: {
+    planId: 'bbbbbbbb-0000-0000-0000-000000000000', mode: 1,
+    steps: [
+      { stepId: 'initiate-acme',
+        namespace: 'payment', toolName: 'initiate', version: 'v1',
+        input: { payerName:'ONE BCG UK Ltd', payerJurisdiction:'GB', payerEntityId:'PAYER-ONEBCG-001',
+                 payeeRef:'Acme Consulting', grossAmount:5000, currency:'GBP',
+                 serviceType:'ManagementConsulting', ppmId:'PPM-001', initiatorId:'plan-demo' },
+        dependsOn: [], outputMappings: {} },
+      { stepId: 'initiate-horizon',
+        namespace: 'payment', toolName: 'initiate', version: 'v1',
+        input: { payerName:'ONE BCG UK Ltd', payerJurisdiction:'GB', payerEntityId:'PAYER-ONEBCG-001',
+                 payeeRef:'Horizon Advisory', grossAmount:10000, currency:'USD',
+                 serviceType:'ManagementConsulting', ppmId:'PPM-002', initiatorId:'plan-demo' },
+        dependsOn: [], outputMappings: {} },
+    ],
+  },
+  // DAG: initiate runs first; verify-payee depends on it and maps its PRID;
+  // ppm-check depends on both and maps PRID + verifiedPayeeId automatically.
+  dag: {
+    planId: 'cccccccc-0000-0000-0000-000000000000', mode: 2,
+    steps: [
+      { stepId: 'initiate',
+        namespace: 'payment', toolName: 'initiate', version: 'v1',
+        input: { payerName:'ONE BCG UK Ltd', payerJurisdiction:'GB', payerEntityId:'PAYER-ONEBCG-001',
+                 payeeRef:'Acme Consulting', grossAmount:5000, currency:'GBP',
+                 serviceType:'ManagementConsulting', ppmId:'PPM-001', initiatorId:'plan-demo' },
+        dependsOn: [], outputMappings: {} },
+      { stepId: 'verify-payee',
+        namespace: 'payment', toolName: 'verify-payee', version: 'v1',
+        input: { paymentId:'00000000-0000-0000-0000-000000000000', payeeRef:'Acme Consulting' },
+        dependsOn: ['initiate'],
+        outputMappings: { paymentId: 'initiate.prid' } },
+      { stepId: 'ppm-check',
+        namespace: 'payment', toolName: 'ppm-check', version: 'v1',
+        input: { paymentId:'00000000-0000-0000-0000-000000000000', ppmId:'PPM-001',
+                 verifiedPayeeId:'00000000-0000-0000-0000-000000000000',
+                 serviceType:'ManagementConsulting', grossAmount:5000, currency:'GBP' },
+        dependsOn: ['initiate', 'verify-payee'],
+        outputMappings: { paymentId: 'initiate.prid', verifiedPayeeId: 'verify-payee.payeeId' } },
+    ],
+  },
+};
+
+function loadPlanSample(mode) {
+  document.getElementById('plan-editor').value = JSON.stringify(planSamples[mode], null, 2);
+}
+
+async function executePlan() {
+  if (!JWT) { showPlanBanner('error','⚠','No JWT. Reload the page.'); return; }
+  let plan;
+  try { plan = JSON.parse(document.getElementById('plan-editor').value); }
+  catch(e) { showPlanBanner('error','✕',`Invalid JSON: ${e.message}`); return; }
+
+  document.getElementById('plan-run-btn').disabled = true;
+  document.getElementById('plan-spinner').style.display = 'inline';
+  document.getElementById('plan-results-card').style.display = 'none';
+  logTo('plan-log-output','dim','── POST /api/v1/plans/execute ───────────────────');
+
+  try {
+    const r    = await apiFetch('POST', '/api/v1/plans/execute', plan);
+    const data = await r.json();
+    logTo('plan-log-output', r.ok ? 'ok' : 'err', `HTTP ${r.status}`);
+
+    if (r.ok) {
+      const modeNames = {0:'Sequential',1:'Parallel',2:'DAG'};
+      showPlanBanner('success','✓',`Plan executed (${modeNames[data.mode] ?? data.mode}). ${data.results?.length ?? 0} step(s).`);
+      renderPlanResults(data.results ?? []);
+    } else {
+      showPlanBanner('error','✕', data.detail ?? JSON.stringify(data));
+    }
+  } catch(e) {
+    logTo('plan-log-output','err',e.message);
+    showPlanBanner('error','✕',e.message);
+  } finally {
+    document.getElementById('plan-run-btn').disabled = false;
+    document.getElementById('plan-spinner').style.display = 'none';
+  }
+}
+
+function renderPlanResults(results) {
+  const card = document.getElementById('plan-results-card');
+  const body = document.getElementById('plan-results-body');
+  card.style.display = 'block';
+  if (!results.length) {
+    body.innerHTML = '<div style="padding:16px 20px;font-size:12px;color:#aaa;">No results.</div>';
+    return;
+  }
+  body.innerHTML = results.map(r => {
+    const cls  = r.success ? 'pass' : 'blocked';
+    const icon = r.success ? '✓' : '✕';
+    const raw  = r.data ? JSON.stringify(r.data, null, 2) : (r.error ? JSON.stringify(r.error, null, 2) : '—');
+    return `
+      <div class="plan-result-row">
+        <div class="trace-num ${cls}" style="flex-shrink:0;">${icon}</div>
+        <div class="plan-step-id">${escHtml(r.stepId)}</div>
+        <div class="plan-step-data">${escHtml(raw.slice(0,400))}</div>
+        <span class="tag ${cls}">${r.success ? 'OK' : 'FAIL'}</span>
+      </div>`;
+  }).join('');
+}
+
+function showPlanBanner(type, icon, text) {
+  const b = document.getElementById('plan-status-banner');
+  b.className = `status-banner visible ${type}`;
+  document.getElementById('plan-status-icon').textContent = icon;
+  document.getElementById('plan-status-text').textContent = text;
+}
+function clearPlanLog() { document.getElementById('plan-log-output').innerHTML = ''; }
+
+// ── LLM Chat ───────────────────────────────────────────────────────────────────
+function fillChatPrompt(text) {
+  document.getElementById('chat-input').value = text;
+  document.getElementById('chat-input').focus();
+}
+
+function chatKeyDown(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const msg   = input.value.trim();
+  if (!msg || !JWT) return;
+  appendChatBubble('user', msg);
+  input.value = '';
+  document.getElementById('chat-send-btn').disabled = true;
+  document.getElementById('chat-spinner').style.display = 'inline';
+  logTo('chat-log-output', 'dim', '── POST /api/v1/chat/stream ───────────────────');
+
+  // Clear pending tool card tracker
+  if (typeof pendingToolCards !== 'undefined') pendingToolCards.clear();
+
+  showThinkingIndicator();
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${JWT}` },
+      body: JSON.stringify({ message: msg }),
+    });
+
+    if (!response.ok || !response.body) {
+      removeThinkingIndicator();
+      const err = await response.json().catch(() => ({ error: response.statusText }));
+      appendChatBubble('assistant', `Error ${response.status}: ${err.error ?? JSON.stringify(err)}`);
+      return;
+    }
+
+    // Read SSE stream via Fetch ReadableStream (works with POST unlike EventSource)
+    const reader  = response.body.getReader();
+    const decoder = new TextDecoder();
+    let   buffer  = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE events are separated by double newlines
+      const blocks = buffer.split('\n\n');
+      buffer = blocks.pop() ?? '';
+
+      for (const block of blocks) {
+        if (!block.trim()) continue;
+        let eventType = '', data = '';
+        for (const line of block.split('\n')) {
+          if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+          if (line.startsWith('data: '))  data      = line.slice(6).trim();
+        }
+        if (eventType && data) handleStreamEvent(eventType, JSON.parse(data));
+      }
+    }
+  } catch(e) {
+    removeThinkingIndicator();
+    logTo('chat-log-output', 'err', e.message);
+    appendChatBubble('assistant', `Network error: ${e.message}`);
+  } finally {
+    document.getElementById('chat-send-btn').disabled = false;
+    document.getElementById('chat-spinner').style.display = 'none';
+  }
+}
+
+function appendChatBubble(role, text) {
+  const thread = document.getElementById('chat-thread');
+  const div    = document.createElement('div');
+  div.className   = `chat-bubble ${role}`;
+  div.textContent = text;
+  thread.appendChild(div);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function showThinkingIndicator() {
+  const thread = document.getElementById('chat-thread');
+  const div    = document.createElement('div');
+  div.className = 'thinking-bubble';
+  div.id        = 'chat-thinking';
+  div.innerHTML =
+    '<span style="font-size:12px;">Claude is thinking</span>' +
+    '<span class="thinking-dot"></span>' +
+    '<span class="thinking-dot"></span>' +
+    '<span class="thinking-dot"></span>';
+  thread.appendChild(div);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function removeThinkingIndicator() {
+  const el = document.getElementById('chat-thinking');
+  if (el) el.remove();
+}
+
+function fmtTokens(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n); }
+
+function appendTokenChip(thread, inputTokens, outputTokens) {
+  if (!inputTokens && !outputTokens) return;
+  const chip = document.createElement('div');
+  chip.className = 'token-usage-chip';
+  chip.textContent = `${fmtTokens(inputTokens)} in · ${fmtTokens(outputTokens)} out tokens`;
+  thread.appendChild(chip);
+}
+
+function renderChatTurn(toolCalls, reply, inputTokens, outputTokens) {
+  const thread = document.getElementById('chat-thread');
+
+  if (toolCalls && toolCalls.length > 0) {
+    const block = document.createElement('div');
+    block.className = 'tool-calls-block';
+
+    const header = document.createElement('div');
+    header.className = 'tool-calls-header';
+    header.textContent = `Used ${toolCalls.length} tool${toolCalls.length !== 1 ? 's' : ''}`;
+    block.appendChild(header);
+
+    toolCalls.forEach((tc, i) => {
+      const icon     = tc.success ? '✓' : (tc.suspended ? '⏸' : '✕');
+      const color    = tc.success ? 'var(--success)' : (tc.suspended ? 'var(--warn)' : 'var(--red)');
+      const detailId = `tcd-${Date.now()}-${i}`;
+      const togId    = `tcg-${Date.now()}-${i}`;
+
+      const row = document.createElement('div');
+      row.className = 'tool-call-row';
+      row.innerHTML =
+        `<span class="tool-call-status" style="color:${color};">${icon}</span>` +
+        `<span class="tool-call-name-text">${escHtml(tc.toolName ?? tc.fullName)}</span>` +
+        `<span class="tool-call-toggle" id="${togId}">▸ expand</span>`;
+
+      const detail = document.createElement('div');
+      detail.className = 'tool-call-detail';
+      detail.id        = detailId;
+
+      let inputStr = '—';
+      try { inputStr = JSON.stringify(tc.input, null, 2); } catch(e) {}
+
+      detail.innerHTML =
+        '<div class="tool-call-section-label">Input</div>' +
+        `<pre class="tool-call-json-block">${escHtml(inputStr)}</pre>` +
+        '<div class="tool-call-section-label">Output</div>' +
+        `<pre class="tool-call-json-block">${escHtml(tc.outputJson ?? '—')}</pre>`;
+
+      row.addEventListener('click', () => {
+        const open = detail.classList.toggle('open');
+        document.getElementById(togId).textContent = open ? '▾ collapse' : '▸ expand';
+      });
+
+      block.appendChild(row);
+      block.appendChild(detail);
+    });
+
+    thread.appendChild(block);
+  }
+
+  if (reply && reply.trim()) {
+    const div     = document.createElement('div');
+    div.className = 'chat-bubble assistant';
+    div.textContent = reply;
+    thread.appendChild(div);
+  }
+
+  appendTokenChip(thread, inputTokens ?? 0, outputTokens ?? 0);
+  thread.scrollTop = thread.scrollHeight;
+}
+function clearChatLog() { document.getElementById('chat-log-output').innerHTML = ''; }
+
+function newChat() {
+  document.getElementById('chat-thread').innerHTML = '';
+  document.getElementById('chat-input').value = '';
+  document.getElementById('chat-input').focus();
+}
+
+function toggleToolCard(bodyId, togId) {
+  const body = document.getElementById(bodyId);
+  const tog  = document.getElementById(togId);
+  if (!body) return;
+  const open = body.classList.toggle('open');
+  if (tog) tog.textContent = open ? '▾ collapse' : '▸ expand';
+}
+
+// ── Scenarios ──────────────────────────────────────────────────────────────────
+let scenarioListCache = null;
+let currentScenarioExecutionId = null;
+let currentScenarioApprovalId  = null;
+let currentScenarioToken       = null;
+
+async function loadScenarioList() {
+  if (scenarioListCache) { applyScenarioList(scenarioListCache); return; }
+  try {
+    const r    = await apiFetch('GET', '/api/v1/scenarios');
+    const list = await r.json();
+    scenarioListCache = list;
+    applyScenarioList(list);
+  } catch(e) {
+    logTo('scenario-log-output','err',`Failed to load scenarios: ${e.message}`);
+  }
+}
+
+function applyScenarioList(scenarios) {
+  // Populate dropdown
+  const sel = document.getElementById('scenario-select');
+  sel.innerHTML = '<option value="">— select a scenario —</option>' +
+    scenarios.map(s =>
+      `<option value="${escHtml(s.name)}"
+               data-version="${escHtml(s.version)}"
+               data-desc="${escHtml(s.description)}"
+               data-schema="${escHtml(JSON.stringify(s.inputSchema ?? {}))}">${escHtml(s.name)} (${escHtml(s.version)})</option>`
+    ).join('');
+
+  // Populate sidebar
+  const sidebar = document.getElementById('scenario-sidebar-list');
+  if (sidebar) {
+    sidebar.innerHTML = scenarios.length === 0
+      ? '<div style="color:#aaa;font-size:12px;">No scenarios registered.</div>'
+      : scenarios.map(s => `
+          <div>
+            <div style="color:var(--nearblack);font-family:\'Courier New\',monospace;font-size:11px;">${escHtml(s.name)}</div>
+            <div style="font-size:12px;margin-top:2px;">${escHtml(s.description)}</div>
+          </div>`).join('');
+  }
+}
+
+function onScenarioSelected() {
+  const sel   = document.getElementById('scenario-select');
+  const opt   = sel.options[sel.selectedIndex];
+  const card  = document.getElementById('scenario-schema-display');
+  const desc  = document.getElementById('scenario-schema-desc');
+
+  if (!sel.value) { card.style.display = 'none'; return; }
+
+  desc.textContent    = opt?.dataset?.desc ?? '';
+  card.style.display  = 'block';
+
+  // Pre-populate input with sensible defaults based on scenario name
+  const defaults = getScenarioDefaults(sel.value);
+  document.getElementById('scenario-input-editor').value =
+    JSON.stringify(defaults, null, 2);
+}
+
+function getScenarioDefaults(scenarioName) {
+  const complianceDefaults = {
+    payerName: 'ONE BCG UK Ltd', payerJurisdiction: 'GB',
+    payerEntityId: 'PAYER-ONEBCG-001', payeeRef: 'Acme Consulting',
+    grossAmount: 5000, currency: 'GBP', serviceType: 0,
+    ppmId: 'PPM-001', initiatorId: 'scenario-demo',
+  };
+  const map = {
+    'payment.compliance-check': complianceDefaults,
+    'payment.expired-ppm':      {},
+    'payment.kyc-block':        {},
+    'payment.over-limit':       {},
+  };
+  return map[scenarioName] ?? {};
+}
+
+async function runScenario() {
+  const sel = document.getElementById('scenario-select');
+  if (!sel.value) { showScenarioBanner('error','⚠','Select a scenario first.'); return; }
+
+  let input;
+  try { input = JSON.parse(document.getElementById('scenario-input-editor').value); }
+  catch(e) { showScenarioBanner('error','✕',`Invalid JSON: ${e.message}`); return; }
+
+  const scenarioName    = sel.value;
+  const scenarioVersion = sel.options[sel.selectedIndex]?.dataset?.version ?? 'v1';
+
+  document.getElementById('scenario-run-btn').disabled = true;
+  document.getElementById('scenario-spinner').style.display = 'inline';
+  document.getElementById('scenario-results-card').style.display = 'none';
+  document.getElementById('scenario-approval-panel').style.display = 'none';
+  currentScenarioExecutionId = null;
+  currentScenarioApprovalId  = null;
+  currentScenarioToken       = null;
+
+  logTo('scenario-log-output','dim',`── POST /api/v1/scenarios/${scenarioName}/run ──`);
+
+  try {
+    const r    = await apiFetch('POST', `/api/v1/scenarios/${scenarioName}/run`,
+                                { input, version: scenarioVersion });
+    const data = await r.json();
+    logTo('scenario-log-output', r.ok || r.status === 202 ? 'ok' : 'err', `HTTP ${r.status}`);
+
+    if (r.status === 202) {
+      currentScenarioExecutionId = data.executionId;
+      currentScenarioApprovalId  = data.pendingApprovalId;
+      renderScenarioSteps(data.completedSteps ?? []);
+      showScenarioBanner('warning','⏸',
+        `Scenario suspended at step "${data.suspendedAtStep}". Approval required.`);
+      await showScenarioApprovalPanel(data.pendingApprovalId);
+    } else if (r.ok) {
+      currentScenarioExecutionId = data.executionId;
+      renderScenarioSteps(data.completedSteps ?? []);
+      showScenarioBanner('success','✓',
+        `Scenario completed. ${data.completedSteps?.length ?? 0} step(s) executed.`);
+    } else {
+      currentScenarioExecutionId = data.executionId;
+      renderScenarioSteps(data.completedSteps ?? []);
+      showScenarioBanner('error','✕',
+        `Scenario failed: ${data.error ?? JSON.stringify(data)}`);
+    }
+  } catch(e) {
+    logTo('scenario-log-output','err',e.message);
+    showScenarioBanner('error','✕',e.message);
+  } finally {
+    document.getElementById('scenario-run-btn').disabled = false;
+    document.getElementById('scenario-spinner').style.display = 'none';
+  }
+}
+
+function renderScenarioSteps(steps) {
+  const card = document.getElementById('scenario-results-card');
+  const body = document.getElementById('scenario-results-body');
+  card.style.display = 'block';
+
+  if (!steps || steps.length === 0) {
+    body.innerHTML = '<div style="padding:16px 20px;font-size:12px;color:#aaa;">No steps executed.</div>';
+    return;
+  }
+
+  body.innerHTML = steps.map(s => {
+    const cls  = s.success ? 'pass' : 'blocked';
+    const icon = s.success ? '✓' : '✕';
+    const data = s.data   ? JSON.stringify(s.data,  null, 2) : null;
+    const err  = s.error  ? JSON.stringify(s.error, null, 2) : null;
+    const raw  = data ?? err ?? '—';
+    return `
+      <div class="scenario-step-row">
+        <div class="trace-num ${cls}" style="flex-shrink:0;">${icon}</div>
+        <div class="scenario-step-id">${escHtml(s.stepId)}</div>
+        <div class="scenario-step-data">${escHtml(raw.slice(0, 400))}</div>
+        <span class="tag ${cls}">${s.success ? 'OK' : 'FAIL'}</span>
+      </div>`;
+  }).join('');
+}
+
+async function showScenarioApprovalPanel(approvalId) {
+  const panel = document.getElementById('scenario-approval-panel');
+  panel.style.display = 'block';
+
+  let detail = null;
+  try {
+    const r = await apiFetch('GET', `/api/v1/approvals/${approvalId}`);
+    detail   = await r.json();
+  } catch(e) {}
+
+  document.getElementById('scenario-approval-meta').innerHTML = `
+    <div class="meta-item"><label>Approval ID</label><span>${approvalId}</span></div>
+    <div class="meta-item"><label>Risk Level</label><span>${detail?.risk ?? '—'}</span></div>
+    <div class="meta-item"><label>Channel</label><span>${detail?.channel ?? '—'}</span></div>
+    <div class="meta-item"><label>Tool</label><span>${detail?.toolFullName ?? '—'}</span></div>
+    <div class="meta-item"><label>Expires</label><span>${detail?.expiresAt ? new Date(detail.expiresAt).toLocaleString() : '—'}</span></div>`;
+
+  try {
+    const tr = await apiFetch('GET', `/api/v1/approvals/${approvalId}/token`);
+    const td = await tr.json();
+    currentScenarioToken = td.approvalToken;
+    document.getElementById('scenario-approval-token').textContent = td.approvalToken;
+    logTo('scenario-log-output','warn',`[DEV] Approval token: ${td.approvalToken}`);
+  } catch(e) {
+    document.getElementById('scenario-approval-token').textContent = 'Token unavailable';
+  }
+}
+
+async function doScenarioApprove() {
+  if (!currentScenarioApprovalId || !currentScenarioToken) return;
+  document.getElementById('scenario-approve-btn').disabled = true;
+  document.getElementById('scenario-deny-btn').disabled    = true;
+  document.getElementById('scenario-approval-spinner').style.display = 'inline';
+
+  try {
+    const r = await apiFetch('POST', `/api/v1/approvals/${currentScenarioApprovalId}/approve`,
+      { approvalToken: currentScenarioToken });
+    const d = await r.json();
+    logTo('scenario-log-output', r.ok ? 'ok' : 'err', `Approve HTTP ${r.status}`);
+    if (!r.ok) { showScenarioBanner('error','✕',`Approval failed: ${d.error ?? JSON.stringify(d)}`); return; }
+
+    logTo('scenario-log-output','ok','Approval granted — resuming scenario…');
+    showScenarioBanner('info','↻','Approval granted. Resuming scenario…');
+
+    const rr = await apiFetch('POST', `/api/v1/scenarios/${currentScenarioExecutionId}/resume`);
+    const rd = await rr.json();
+    logTo('scenario-log-output', rr.ok ? 'ok' : 'err', `Resume HTTP ${rr.status}`);
+
+    document.getElementById('scenario-approval-panel').style.display = 'none';
+
+    if (rr.ok) {
+      renderScenarioSteps(rd.completedSteps ?? []);
+      showScenarioBanner('success','✓',`Scenario completed after approval.`);
+    } else {
+      showScenarioBanner('error','✕',`Resume failed: ${rd.error ?? JSON.stringify(rd)}`);
+    }
+  } catch(e) {
+    showScenarioBanner('error','✕',e.message);
+  } finally {
+    document.getElementById('scenario-approve-btn').disabled = false;
+    document.getElementById('scenario-deny-btn').disabled    = false;
+    document.getElementById('scenario-approval-spinner').style.display = 'none';
+  }
+}
+
+async function doScenarioDeny() {
+  if (!currentScenarioApprovalId) return;
+  try {
+    await apiFetch('POST', `/api/v1/approvals/${currentScenarioApprovalId}/deny`,
+      { reason: 'Denied via Scenarios tab.' });
+    document.getElementById('scenario-approval-panel').style.display = 'none';
+    showScenarioBanner('warning','✕','Approval denied. Scenario will not proceed.');
+  } catch(e) { logTo('scenario-log-output','err',e.message); }
+}
+
+function showScenarioBanner(type, icon, text) {
+  const b = document.getElementById('scenario-status-banner');
+  b.className = `status-banner visible ${type}`;
+  document.getElementById('scenario-status-icon').textContent = icon;
+  document.getElementById('scenario-status-text').textContent = text;
+}
+
+function formatScenarioInput() {
+  try {
+    const el = document.getElementById('scenario-input-editor');
+    el.value = JSON.stringify(JSON.parse(el.value), null, 2);
+  } catch(e) { /* ignore */ }
+}
+
+function clearScenarioLog() {
+  document.getElementById('scenario-log-output').innerHTML = '';
+}
+
+// ── Streaming chat helpers ────────────────────────────────────────────────────
+// Tracks in-progress tool cards during streaming so they can be updated in place
+const pendingToolCards = new Map(); // toolName → { cardId, bodyId, headerId }
+
+function handleStreamEvent(eventType, data) {
+  switch (eventType) {
+    case 'tool_started':
+      removeThinkingIndicator();
+      appendToolStartedCard(data.toolName, data.input);
+      break;
+    case 'tool_completed':
+      finaliseToolCard(data.toolName, data.outputJson, data.success, data.suspended);
+      showThinkingIndicator();  // model may continue after tool
+      break;
+    case 'done':
+      removeThinkingIndicator();
+      logTo('chat-log-output', data.isSuccess ? 'ok' : 'err', `Stream complete`);
+      if (data.isSuccess) {
+        if (data.reply && data.reply.trim()) appendChatBubble('assistant', data.reply);
+      } else {
+        appendChatBubble('assistant', `Error: ${data.error ?? 'Unknown error'}`);
+      }
+      appendTokenChip(document.getElementById('chat-thread'), data.inputTokens ?? 0, data.outputTokens ?? 0);
+      break;
+  }
+}
+
+function appendToolStartedCard(toolName, input) {
+  const thread = document.getElementById('chat-thread');
+  const uid    = `${toolName.replace(/[^a-z0-9]/gi,'-')}-${Date.now()}`;
+  const cardId = `tc-card-${uid}`;
+  const bodyId = `tc-body-${uid}`;
+  const headId = `tc-head-${uid}`;
+  const togId  = `tc-tog-${uid}`;
+
+  const card = document.createElement('div');
+  card.className = 'tool-call-card';
+  card.id = cardId;
+  card.innerHTML = `
+    <div class="tool-call-header" id="${headId}" onclick="toggleToolCard('${bodyId}','${togId}')">
+      <span style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,215,0,.3);border-top-color:var(--yellow);border-radius:50%;animation:spin 0.7s linear infinite;flex-shrink:0;"></span>
+      <span class="tool-call-name">${escHtml(toolName)}</span>
+      <span style="font-size:11px;color:var(--darkgrey);">Running…</span>
+      <span style="font-size:11px;color:var(--darkgrey);margin-left:auto;" id="${togId}">▸ expand</span>
+    </div>
+    <div class="tool-call-body" id="${bodyId}">
+      <div class="tool-call-section-label">Input</div>
+      <pre class="tool-call-json">${escHtml(JSON.stringify(input, null, 2))}</pre>
+    </div>`;
+
+  thread.appendChild(card);
+  thread.scrollTop = thread.scrollHeight;
+  pendingToolCards.set(toolName, { cardId, bodyId, headId, togId });
+}
+
+function finaliseToolCard(toolName, outputJson, success, suspended) {
+  const refs = pendingToolCards.get(toolName);
+  pendingToolCards.delete(toolName);
+  if (!refs) return;
+
+  const head = document.getElementById(refs.headId);
+  const body = document.getElementById(refs.bodyId);
+  if (!head || !body) return;
+
+  const icon  = success ? '✓' : (suspended ? '⏸' : '✕');
+  const color = success ? 'var(--success)' : (suspended ? 'var(--warn)' : 'var(--red)');
+  const label = success ? 'Done' : (suspended ? 'Suspended — awaiting approval' : 'Failed');
+
+  head.innerHTML = `
+    <span style="color:${color};font-size:13px;">${icon}</span>
+    <span class="tool-call-name">${escHtml(toolName)}</span>
+    <span style="font-size:11px;color:${color};">${label}</span>
+    <span style="font-size:11px;color:var(--darkgrey);margin-left:auto;" id="${refs.togId}">▸ expand</span>`;
+  head.onclick = () => toggleToolCard(refs.bodyId, refs.togId);
+
+  body.innerHTML += `
+    <div class="tool-call-section-label" style="margin-top:8px;">Output</div>
+    <pre class="tool-call-json">${escHtml(outputJson ?? '—')}</pre>`;
+
+  const thread = document.getElementById('chat-thread');
+  thread.scrollTop = thread.scrollHeight;
+}
+
+// ── Single Tool ────────────────────────────────────────────────────────────────
+async function invokeTool() {
+  const sel = document.getElementById('tool-select');
+  if (!sel.value) { showToolBanner('error','⚠','Select a tool first.'); return; }
+  let inputJson;
+  try { inputJson = JSON.parse(document.getElementById('tool-input-editor').value); }
+  catch(e) { showToolBanner('error','✕',`Invalid JSON: ${e.message}`); return; }
+
+  const parts      = sel.value.split('.');
+  const ns         = parts[0] ?? '';
+  const name       = parts.slice(1).join('.');
+  const callerType = 0;
+  const payload    = { namespace: ns, name, version: 'v1', input: inputJson, callerType };
+
+  document.getElementById('tool-invoke-btn').disabled = true;
+  document.getElementById('tool-spinner').style.display = 'inline';
+  document.getElementById('tool-response-card').style.display = 'none';
+  logTo('tool-log-output','dim',`── POST /api/v1/tools/invoke [${sel.value}] ────`);
+
+  try {
+    const r    = await apiFetch('POST', '/api/v1/tools/invoke', payload);
+    const data = await r.json();
+    logTo('tool-log-output', r.ok ? 'ok' : 'warn', `HTTP ${r.status}`);
+    document.getElementById('tool-response-card').style.display = 'block';
+    document.getElementById('tool-response-body').textContent = JSON.stringify(data, null, 2);
+    if (r.status === 202)
+      showToolBanner('warning','⏸','Suspended — tool requires human approval.');
+    else if (r.ok)
+      showToolBanner('success','✓','Tool executed successfully.');
+    else
+      showToolBanner('error','✕',`Error: ${data.error?.description ?? JSON.stringify(data)}`);
+  } catch(e) {
+    logTo('tool-log-output','err',e.message);
+    showToolBanner('error','✕',e.message);
+  } finally {
+    document.getElementById('tool-invoke-btn').disabled = false;
+    document.getElementById('tool-spinner').style.display = 'none';
+  }
+}
+
+function formatToolInput() {
+  try {
+    const el = document.getElementById('tool-input-editor');
+    el.value = JSON.stringify(JSON.parse(el.value), null, 2);
+  } catch(e) { /* ignore */ }
+}
+
+function showToolBanner(type, icon, text) {
+  const b = document.getElementById('tool-status-banner');
+  b.className = `status-banner visible ${type}`;
+  document.getElementById('tool-status-icon').textContent = icon;
+  document.getElementById('tool-status-text').textContent = text;
+}
+function clearToolLog() { document.getElementById('tool-log-output').innerHTML = ''; }
+
+// ── Approvals ─────────────────────────────────────────────────────────────────
+async function loadApprovals() {
+  if (!JWT) return;
+  try {
+    const r    = await apiFetch('GET', '/api/v1/approvals');
+    const list = await r.json();
+    renderApprovalsList(list);
+    updateApprovalBadge(Array.isArray(list) ? list.length : 0);
+    document.getElementById('approvals-refresh-time').textContent =
+      `Updated ${new Date().toLocaleTimeString()}`;
+  } catch(e) {
+    document.getElementById('approvals-body').innerHTML =
+      `<div style="padding:20px;font-size:13px;color:var(--red);">Load failed: ${e.message}</div>`;
+  }
+}
+
+function renderApprovalsList(list) {
+  const body = document.getElementById('approvals-body');
+  if (!Array.isArray(list) || list.length === 0) {
+    body.innerHTML = '<div style="padding:28px 20px;font-size:13px;color:#aaa;text-align:center;">✓ No pending approvals.</div>';
+    return;
+  }
+
+  body.innerHTML = list.map(a => {
+    const riskCls  = { High:'blocked', Critical:'blocked', Medium:'held', Low:'pending' }[a.risk] ?? 'pending';
+    const ackId    = `ack-${a.id}`;
+    const ackBodyId = `ack-body-${a.id}`;
+
+    // Parse acknowledgement statement
+    let ackHtml = '';
+    try {
+      if (a.acknowledgementJson) {
+        const ack = JSON.parse(a.acknowledgementJson);
+        ackHtml = `
+          <div class="ack-toggle" onclick="toggleAck('${ackBodyId}', this)">
+            ⚖ EU AI Act Acknowledgement — ${ack.regBasis ?? ''} &nbsp; ▸ expand
+          </div>
+          <div class="ack-body" id="${ackBodyId}">
+            <strong>Risk Level:</strong> ${escHtml(ack.riskLevel ?? a.risk)}<br>
+            <strong>Regulation:</strong> ${escHtml(ack.regBasis ?? '—')}<br>
+            <strong>Statement:</strong> ${escHtml(ack.operatorStatement ?? '—')}<br>
+            <strong>Issued:</strong> ${ack.issuedAt ? new Date(ack.issuedAt).toLocaleString() : '—'}
+          </div>`;
+      }
+    } catch(e) {}
+
+    // Payment context section
+    const hasPayment = a.payerName || a.payeeRef || a.grossAmount;
+    const paymentSection = hasPayment ? `
+      <div class="approval-section">
+        ${field('Payer', a.payerName ? `${escHtml(a.payerName)} (${escHtml(a.payerJurisdiction ?? '?')})` : '—')}
+        ${field('Payee', a.payeeRef ?? '—')}
+        ${field('Amount', a.grossAmount != null ? `${escHtml(a.currency ?? '')} ${Number(a.grossAmount).toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2})}` : '—')}
+        ${field('Net Payable', a.netPayableAmount != null ? `${escHtml(a.currency ?? '')} ${Number(a.netPayableAmount).toLocaleString('en-GB', {minimumFractionDigits:2, maximumFractionDigits:2})}` : '—')}
+        ${field('WHT', a.whtAmount != null ? `${escHtml(a.currency ?? '')} ${Number(a.whtAmount).toLocaleString('en-GB', {minimumFractionDigits:2})}` : '—')}
+        ${field('Service', a.serviceType ?? '—')}
+        ${field('PPM', a.ppmId ?? '—')}
+        ${a.initiatorId ? field('Initiator', a.initiatorId) : ''}
+      </div>` : '';
+
+    const exp  = a.expiresAt ? new Date(a.expiresAt) : null;
+    const expired = exp && exp < new Date();
+
+    return `
+      <div class="approval-card" id="acard-${escHtml(a.id)}">
+        <div class="approval-card-header">
+          <span class="approval-tool-name">🔔 ${escHtml(a.toolFullName ?? '—')}</span>
+          <span class="tag ${riskCls}">${escHtml(a.risk ?? '—')}</span>
+          <span class="tag ${escHtml(a.channel ?? 'pending')}">${escHtml(a.channel ?? '—')}</span>
+          ${exp && !expired
+            ? `<span class="approval-countdown" id="countdown-${escHtml(a.id)}" data-expires="${escHtml(a.expiresAt)}">⏳ calculating…</span>`
+            : `<span class="approval-countdown urgent">⚠ Expired</span>`}
+        </div>
+        ${paymentSection}
+        <div class="approval-section">
+          ${a.prid ? field('PRID', a.prid, true) : ''}
+          ${field('Created', a.createdAt ? new Date(a.createdAt).toLocaleString() : '—')}
+          ${exp ? field('Expires', exp.toLocaleString(), false, expired) : ''}
+        </div>
+        ${ackHtml}
+        ${!expired ? `
+        <div class="approval-actions">
+          <button class="btn btn-warn" style="font-size:12px;padding:6px 16px;"
+            onclick="denyApproval('${escHtml(a.id)}')">Deny</button>
+          <button class="btn btn-success" style="font-size:12px;padding:6px 16px;"
+            onclick="approveApproval('${escHtml(a.id)}')">✓ Approve</button>
+        </div>` : `<div style="padding:12px 16px;font-size:12px;color:#aaa;text-align:right;">Expired — cannot action</div>`}
+      </div>`;
+  }).join('');
+
+  // Start countdown timers for non-expired approvals
+  startCountdowns();
+}
+
+function field(label, value, mono, urgent) {
+  const cls = [mono ? 'mono' : '', urgent ? 'error' : ''].filter(Boolean).join(' ');
+  return `<div class="approval-field">
+    <label>${label}</label>
+    <div class="val ${cls}">${value}</div>
+  </div>`;
+}
+
+function toggleAck(bodyId, toggleEl) {
+  const body = document.getElementById(bodyId);
+  if (!body) return;
+  const open = body.classList.toggle('open');
+  toggleEl.innerHTML = toggleEl.innerHTML.replace(open ? '▸ expand' : '▾ collapse', open ? '▾ collapse' : '▸ expand');
+}
+
+function startCountdowns() {
+  if (window._countdownTimer) clearInterval(window._countdownTimer);
+  window._countdownTimer = setInterval(() => {
+    document.querySelectorAll('[data-expires]').forEach(el => {
+      const exp = new Date(el.dataset.expires);
+      const ms  = exp - new Date();
+      if (ms <= 0) {
+        el.textContent = '⚠ Expired';
+        el.classList.add('urgent');
+        clearInterval(window._countdownTimer);
+        loadApprovals();
+        return;
+      }
+      const total = Math.floor(ms / 1000);
+      const m = Math.floor(total / 60).toString().padStart(2, '0');
+      const s = (total % 60).toString().padStart(2, '0');
+      el.textContent = `⏳ ${m}:${s}`;
+      if (ms < 5 * 60 * 1000) el.classList.add('urgent');
+    });
+  }, 1000);
+}
+
+function updateApprovalBadge(count) {
+  const badge = document.getElementById('approval-badge');
+  if (!badge) return;
+  badge.textContent = count;
+  badge.classList.toggle('visible', count > 0);
+}
+
+async function approveApproval(id) {
+  logTo('approvals-log-output', 'dim', `── Approving ${id} ──`);
+  try {
+    const tr = await apiFetch('GET', `/api/v1/approvals/${id}/token`);
+    if (!tr.ok) { logTo('approvals-log-output', 'err', `Token fetch failed: ${tr.status}`); return; }
+    const { approvalToken } = await tr.json();
+    logTo('approvals-log-output', 'warn', `[DEV] Token: ${approvalToken}`);
+
+    const r = await apiFetch('POST', `/api/v1/approvals/${id}/approve`, { approvalToken });
+    const d = await r.json();
+    logTo('approvals-log-output', r.ok ? 'ok' : 'err', `HTTP ${r.status}: ${r.ok ? 'Approved' : (d.error ?? JSON.stringify(d))}`);
+    await loadApprovals();
+  } catch(e) { logTo('approvals-log-output', 'err', e.message); }
+}
+
+async function denyApproval(id) {
+  const reason = window.prompt('Denial reason (required):');
+  if (reason === null || reason.trim() === '') return;
+  logTo('approvals-log-output', 'dim', `── Denying ${id} ──`);
+  try {
+    const r = await apiFetch('POST', `/api/v1/approvals/${id}/deny`, { reason: reason.trim() });
+    const d = await r.json();
+    logTo('approvals-log-output', r.ok ? 'warn' : 'err', `HTTP ${r.status}: ${r.ok ? 'Denied' : (d.error ?? JSON.stringify(d))}`);
+    await loadApprovals();
+  } catch(e) { logTo('approvals-log-output', 'err', e.message); }
+}
+
+function clearApprovalsLog() {
+  document.getElementById('approvals-log-output').innerHTML = '';
+}
+</script>
+</body>
+</html>

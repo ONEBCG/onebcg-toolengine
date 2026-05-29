@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Application\ToolEngine.Application\ToolEngine.Application.csproj" />
+    <ProjectReference Include="..\ToolEngine.Payment.Domain\ToolEngine.Payment.Domain.csproj" />
+    <ProjectReference Include="..\ToolEngine.Payment.Tools\ToolEngine.Payment.Tools.csproj" />
+    <ProjectReference Include="..\..\..\Infrastructure\ToolEngine.Infrastructure\ToolEngine.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+</Project>
