@@ -56,12 +56,12 @@ public sealed class CalculateWhtHandler
     public override string    Name      => "calculate-wht";
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
-        Description:  "Determines the applicable withholding tax (WHT) rate and computes the net disbursable amount.",
-        WhenToUse:    "Call after PPM check (Stage 2). Requires payer/payee jurisdictions, service type, gross amount, and tax year.",
-        WhenNotToUse: "Do not use for domestic payroll tax or VAT/GST calculations — those require different engines.",
+        Description:  "Calculates withholding tax (WHT) based on payer/payee jurisdictions and service type. Returns WHT rate, WHT amount, and net payable amount.",
+        WhenToUse:    "Call after payment.verify-payee. Requires `paymentId` (prid from initiate), `payerJurisdiction`, `payeeJurisdiction` (the `jurisdiction` field from verify-payee output), `serviceType`, `grossAmount`, `currency`, and `taxYear` (current year).",
+        WhenNotToUse: "Do not call before payment.initiate. Do not use for general tax advice — only for payment WHT calculation.",
         Examples:     [
-            "Calculate WHT on USD 50000 consulting fee from GB payer to IN payee for tax year 2026",
-            "Determine WHT on USD 10000 software license fee from US payer to SG payee",
+            "Calculate WHT on GBP 5000 consulting payment from GB to GB",
+            "Determine net payable on USD 50000 cross-border payment",
         ],
         InputSchema:  BuildJsonSchema<CalculateWhtInput>(),
         OutputSchema: BuildJsonSchema<CalculateWhtOutput>());

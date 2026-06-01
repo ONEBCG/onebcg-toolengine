@@ -19,10 +19,39 @@ namespace ToolEngine.Api.Services;
 /// </summary>
 public sealed class ChatService
 {
-    private const string SystemPrompt =
+    // ── System prompt — two modes selectable via LLM:AutonomousToolSelection ───────
+
+    /// <summary>
+    /// Autonomous mode: context-only. The model reasons from tool descriptions
+    /// and WhenToUse semantics to select and sequence tools without explicit guidance.
+    /// Default — enables flexible, intent-driven tool use.
+    /// </summary>
+    private const string AutonomousSystemPrompt =
+        "You are a B2B payment processing assistant for ONE BCG. " +
+        "Use the available payment tools to help users. " +
+        "Each tool's description states exactly what inputs it needs and where they come from — " +
+        "read WhenToUse carefully to determine the correct sequence and required inputs.\n\n" +
+
+        "DEFAULT PAYER CONTEXT — use unless the user specifies otherwise:\n" +
+        "  payerName=ONE BCG UK Ltd  payerJurisdiction=GB  payerEntityId=PAYER-ONEBCG-001\n" +
+        "  initiatorId=chat-user  serviceType=ManagementConsulting\n\n" +
+
+        "AVAILABLE PAYEES:\n" +
+        "  Acme Consulting (PPM-001, active, GBP/USD/EUR, £250k cap)\n" +
+        "  Horizon Advisory (PPM-002, EXPIRED — will block at Stage 2)\n" +
+        "  Risq Capital (PPM-003, active — KYC blocks at Stage 4)\n\n" +
+
+        "Only ask for clarification if genuinely ambiguous (unknown payee, missing amount).\n" +
+        "ServiceType: 0=ManagementConsulting 1=CloudSaaS 2=SoftwareLicense 3=ContractStaffing";
+
+    /// <summary>
+    /// Guided mode: includes explicit WORKFLOW section with prescribed call sequence.
+    /// Use when strict step ordering is required or the model needs more direction.
+    /// Enable via LLM:AutonomousToolSelection=false in appsettings.
+    /// </summary>
+    private const string GuidedSystemPrompt =
         "You are a payment processing assistant for ONE BCG. " +
-        "You have access to the ToolEngine payment pipeline tools. " +
-        "Use them to help users check or process payments. " +
+        "Use the ToolEngine payment pipeline tools to help users check or process payments. " +
         "Briefly explain what you are doing before each tool call.\n\n" +
 
         "DEFAULT PAYER CONTEXT — use these values unless the user specifies otherwise:\n" +
@@ -37,7 +66,7 @@ public sealed class ChatService
         "  Horizon Advisory — PPM-002 (EXPIRED — will block at Stage 2)\n" +
         "  Risq Capital     — PPM-003 (active, USD/GBP, $100k cap — KYC will block at Stage 4)\n\n" +
 
-        "BEHAVIOUR:\n" +
+        "WORKFLOW:\n" +
         "  - To process a payment: call payment.initiate first (creates the record, returns PRID),\n" +
         "    then use that PRID in payment.verify-payee, payment.ppm-check, etc.\n" +
         "  - Call tools directly using the defaults above when the user provides enough\n" +
@@ -49,19 +78,28 @@ public sealed class ChatService
     private readonly ILlmProvider  _provider;
     private readonly IToolRegistry _registry;
     private readonly ISender       _mediator;
+    private readonly string        _systemPrompt;
 
-    public ChatService(ILlmProvider provider, IToolRegistry registry, ISender mediator)
+    public ChatService(
+        ILlmProvider provider,
+        IToolRegistry registry,
+        ISender mediator,
+        Microsoft.Extensions.Options.IOptions<ToolEngine.Infrastructure.Llm.LlmOptions> llmOptions)
     {
-        _provider = provider;
-        _registry = registry;
-        _mediator = mediator;
+        _provider     = provider;
+        _registry     = registry;
+        _mediator     = mediator;
+        // Select prompt mode from config — defaults to autonomous (true)
+        _systemPrompt = llmOptions.Value.AutonomousToolSelection
+            ? AutonomousSystemPrompt
+            : GuidedSystemPrompt;
     }
 
     public async Task<ChatResponse> SendAsync(string userMessage, CancellationToken ct)
     {
         var tools  = BuildLlmTools();
         var result = await _provider.ChatAsync(
-            userMessage, tools, ExecuteToolAsync, SystemPrompt, ct: ct);
+            userMessage, tools, ExecuteToolAsync, _systemPrompt, ct: ct);
 
         if (!result.IsSuccess)
             return ChatResponse.ApiError(result.Error ?? "LLM provider returned an error.");
@@ -91,7 +129,7 @@ public sealed class ChatService
     {
         var tools  = BuildLlmTools();
         var result = await _provider.ChatAsync(
-            userMessage, tools, ExecuteToolAsync, SystemPrompt, onStream, ct);
+            userMessage, tools, ExecuteToolAsync, _systemPrompt, onStream, ct);
 
         if (!result.IsSuccess)
             return ChatResponse.ApiError(result.Error ?? "LLM provider returned an error.");

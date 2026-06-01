@@ -55,10 +55,10 @@ public sealed class InitiatePaymentHandler
     public override string    Name      => "initiate";
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
-        Description:  "Validates and initiates a B2B payment instruction. Creates a PaymentInstruction record and returns its PRID. Always call this first — the PRID is required by all subsequent stage tools.",
-        WhenToUse:    "Call first for every new payment. Provide all payer/payee details, amount, currency, and PPM ID. Returns a PRID to pass to payment.verify-payee.",
-        WhenNotToUse: "Do not call to resume an existing paused payment — use payment.resume for that.",
-        Examples:     ["Initiate GBP 5000 payment from ONE BCG UK Ltd to Acme Consulting under PPM-001"],
+        Description:  "Creates a PaymentInstruction record and returns a unique PRID (Payment Reference ID). The PRID is the key identifier passed as `paymentId` to every subsequent payment tool. Always the first step for any new payment.",
+        WhenToUse:    "Call first for every new payment. Provide payer details, payee name, amount, currency, PMM ID, and service type. The returned `prid` field must be passed as `paymentId` to payment.verify-payee, payment.ppm-check, payment.calculate-wht, payment.kyc-screen, and payment.compile-dossier.",
+        WhenNotToUse: "Do not call if a payment is already in progress (PRID exists). Do not call to resume a suspended payment.",
+        Examples:     ["Process GBP 5000 payment to Acme Consulting", "Initiate a USD 10000 consulting payment to Horizon Advisory under PPM-002"],
         InputSchema:  BuildJsonSchema<InitiatePaymentInput>(),
         OutputSchema: BuildJsonSchema<InitiatePaymentOutput>());
 

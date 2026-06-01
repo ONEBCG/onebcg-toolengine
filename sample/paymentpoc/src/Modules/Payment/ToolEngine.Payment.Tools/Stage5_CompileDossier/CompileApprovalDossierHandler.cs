@@ -58,10 +58,10 @@ public sealed class CompileApprovalDossierHandler
     public override string    Name      => "compile-dossier";
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
-        Description:  "Compiles a complete Payment Dossier from all stage outcomes and routes it to the human approval gate.",
-        WhenToUse:    "Call after KYC screening (Stage 4). Assembles all stage results into a reviewable dossier. Triggers human approval gate via [RequiresApproval].",
-        WhenNotToUse: "Do not call if any prior stage has not PASSED — dossier cannot be submitted with incomplete stage data (spec §4 Stage 5 barrier).",
-        Examples:     ["Compile dossier and submit for Finance Approver sign-off for payment PRID-XYZ"],
+        Description:  "Compiles the approval dossier for the payment and submits it to the human approval gate. The payment SUSPENDS here — it cannot proceed until a human approves it via the Approvals panel.",
+        WhenToUse:    "Call after payment.verify-payee, payment.ppm-check, payment.calculate-wht, and payment.kyc-screen have all passed. Only requires `paymentId` (prid from initiate). When this returns SUSPENDED, direct the user to the Approvals tab to approve before proceeding.",
+        WhenNotToUse: "Do not call before all validation stages are complete. Do not call if the payment is already pending approval or has been approved.",
+        Examples:     ["Submit payment for manager approval", "Compile dossier for GBP 5000 Acme payment"],
         InputSchema:  BuildJsonSchema<CompileApprovalDossierInput>(),
         OutputSchema: BuildJsonSchema<CompileApprovalDossierOutput>());
 

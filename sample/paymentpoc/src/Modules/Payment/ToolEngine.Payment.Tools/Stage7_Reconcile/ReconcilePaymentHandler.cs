@@ -45,10 +45,10 @@ public sealed class ReconcilePaymentHandler
     public override string    Name      => "reconcile";
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
-        Description:  "Matches bank settlement confirmation against the payment record, closes the audit trail, and updates PPM cumulative tracking.",
-        WhenToUse:    "Call after bank settlement confirmation is received (Stage 6 outcome). Required to close the payment lifecycle.",
-        WhenNotToUse: "Do not call before bank settlement confirmation — use Stage 6 polling/retry for pending settlements.",
-        Examples:     ["Reconcile settled USD 50000 payment with bank TX BANK-20260519-XXXX"],
+        Description:  "Reconciles the executed payment against the bank transaction and marks it as SETTLED. Final step in the payment lifecycle.",
+        WhenToUse:    "Call immediately after payment.execute-payment succeeds. Requires `paymentId`, `bankTransactionId` (from execute-payment output), `settledAmount`, `currency`, and optionally `bankReference`.",
+        WhenNotToUse: "Do not call before payment.execute-payment has succeeded and returned a bank transaction ID.",
+        Examples:     ["Reconcile settled payment with bank transaction TX-12345", "Mark payment as settled after bank confirmation"],
         InputSchema:  BuildJsonSchema<ReconcilePaymentInput>(),
         OutputSchema: BuildJsonSchema<ReconcilePaymentOutput>());
 

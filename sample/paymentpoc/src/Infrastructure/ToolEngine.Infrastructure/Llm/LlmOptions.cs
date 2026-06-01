@@ -19,6 +19,17 @@ public sealed class LlmOptions
     /// during the agentic loop so the caller can stream progress to clients via SSE.
     /// </summary>
     public bool         Streaming { get; init; } = false;
+    /// <summary>
+    /// When true (default): the LLM selects tools autonomously based on tool descriptions
+    /// and data-flow semantics. The system prompt provides context only — no step sequencing.
+    ///
+    /// When false: the system prompt includes an explicit WORKFLOW section that instructs
+    /// the model to call tools in a prescribed order. Use when strict sequencing is required
+    /// or the model needs more guidance for complex flows.
+    ///
+    /// Configure in appsettings: LLM:AutonomousToolSelection
+    /// </summary>
+    public bool AutonomousToolSelection { get; init; } = true;
     public ClaudeOptions Claude  { get; init; } = new();
     public OpenAiOptions OpenAI  { get; init; } = new();
 }

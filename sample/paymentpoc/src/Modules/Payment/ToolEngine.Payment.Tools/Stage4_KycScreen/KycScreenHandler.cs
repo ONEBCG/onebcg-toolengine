@@ -69,12 +69,12 @@ public sealed class KycScreenHandler
     public override string    Name      => "kyc-screen";
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
-        Description:  "Screens the payee against global sanctions lists, PEP databases, and adverse media.",
-        WhenToUse:    "Call after WHT calculation (Stage 3). Required for every payment — no caching of results beyond 24 hours.",
-        WhenNotToUse: "Do not use for periodic KYC refresh at onboarding — that is a separate process.",
+        Description:  "Screens the payee against KYC databases and sanctions lists. Blocks the payment if a confirmed match is found.",
+        WhenToUse:    "Call after payment.verify-payee. Requires `paymentId` (prid from initiate), `payeeId` (from verify-payee), `payeeLegalName` (legalName from verify-payee), `payeeJurisdiction` (jurisdiction from verify-payee), `entityType` (from verify-payee), `paymentAmount`, and `paymentPurpose` (service type as string).",
+        WhenNotToUse: "Do not call before payment.verify-payee — the payeeId and payee details are required from that output. Do not use for KYC onboarding.",
         Examples:     [
-            "Screen Acme Consulting Ltd (GB, Corporate) for payment of USD 50000",
-            "KYC screen payee before payment execution",
+            "Screen Acme Consulting before payment execution",
+            "Check Risq Capital against sanctions lists",
         ],
         InputSchema:  BuildJsonSchema<KycScreenInput>(),
         OutputSchema: BuildJsonSchema<KycScreenOutput>());
