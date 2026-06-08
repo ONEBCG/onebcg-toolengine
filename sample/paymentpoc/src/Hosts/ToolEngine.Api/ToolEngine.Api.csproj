@@ -6,8 +6,12 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <LangVersion>latest</LangVersion>
     <UserSecretsId>toolengine-api-poc</UserSecretsId>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Amazon.Lambda.AspNetCoreServer.Hosting" Version="2.1.0" />
+    <PackageReference Include="AWSSDK.SecretsManager"                  Version="4.*" />
+    <PackageReference Include="Google.Apis.Auth"                        Version="1.*" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.*" />
     <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="7.*" />
     <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="7.*" />

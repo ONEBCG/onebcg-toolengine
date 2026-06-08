@@ -101,7 +101,20 @@ public static class ServiceCollectionExtensions
                 services.AddSingleton<ILlmProvider>(sp =>
                     new OpenAiProvider(
                         sp.GetRequiredService<IHttpClientFactory>(),
-                        llmOpts.OpenAI with { ApiKey = apiKey }));
+                        llmOpts.OpenAI with { ApiKey = apiKey },
+                        llmOpts.Streaming));
+        }
+        else if (llmOpts.Provider.Equals("gemini", StringComparison.OrdinalIgnoreCase))
+        {
+            var apiKey = ResolveApiKey(llmOpts.Gemini.ApiKey, "GOOGLE_API_KEY");
+            if (string.IsNullOrWhiteSpace(apiKey))
+                services.AddSingleton<ILlmProvider, NullLlmProvider>();
+            else
+                services.AddSingleton<ILlmProvider>(sp =>
+                    new GeminiProvider(
+                        sp.GetRequiredService<IHttpClientFactory>(),
+                        llmOpts.Gemini with { ApiKey = apiKey },
+                        llmOpts.Streaming));
         }
         else // claude (default)
         {
@@ -112,7 +125,8 @@ public static class ServiceCollectionExtensions
                 services.AddSingleton<ILlmProvider>(sp =>
                     new ClaudeProvider(
                         sp.GetRequiredService<IHttpClientFactory>(),
-                        llmOpts.Claude with { ApiKey = apiKey }));
+                        llmOpts.Claude with { ApiKey = apiKey },
+                        llmOpts.Streaming));
         }
 
         // ── Supporting services ───────────────────────────────────────────────

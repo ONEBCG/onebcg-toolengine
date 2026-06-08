@@ -1,4 +1,4 @@
-# ToolEngine v2026 POC— Architecture Guide
+# ToolEngine v2026 POC — Architecture Guide
 
 **ONE BCG** · Internal Technical Reference
 
@@ -33,7 +33,7 @@ ToolEngine POC is built on .NET 8. The engine layer is domain-agnostic; business
 ┌─────────────────────────────────────────────────────────────────────┐
 │                   Infrastructure                                    │
 │  AppDbContext (EF Core)  │  ICacheProvider  │  ILlmProvider         │
-│  SQLite/SqlServer/Postgres│  Memory/Redis    │  Claude/OpenAI/None   │
+│  SQLite/SqlServer/Postgres│  Memory/Redis    │  Claude/OpenAI/Gemini │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -52,7 +52,7 @@ Tools.Registry  Tools.Executor
        ↑
 Application        (MediatR behaviors + ExecuteToolCommand + ScenarioRunner)
        ↑
-Infrastructure     (EF Core, provider selection, ClaudeProvider, OpenAiProvider)
+Infrastructure     (EF Core, provider selection, ClaudeProvider, OpenAiProvider, GeminiProvider)
        ↑
 Modules/Payment/   (Domain → Tools → Application → Infrastructure → Api)
        ↑
@@ -99,7 +99,7 @@ POST /api/v1/tools/invoke
   │
   ▼ ToolExecutor
   │   IToolRegistry.Resolve(fullName, version)
-  │   IServiceScopeFactory.CreateAsyncScope()     ← M1: scoped handler safe
+  │   IServiceScopeFactory.CreateAsyncScope()     ← scoped handler safe
   │   Deserialise JsonElement → handler's TInput via reflection
   │   Invoke handler.ExecuteAsync(typedRequest, ct)
   │
@@ -116,6 +116,11 @@ POST /api/v1/tools/invoke
 POST /api/v1/payments
   │
   ▼ PaymentsController.InitiatePayment()
+  │   Server-side field validation (H7):
+  │   PayerName, PayerJurisdiction, PayerEntityId, PayeeRef — required, max 256 chars
+  │   GrossAmount — > 0, ≤ 10,000,000
+  │   Currency — must match ^[A-Z]{3}$
+  │   ServiceType — must be defined enum value
   │
   ▼ ProcessPaymentCommandHandler.Handle()
   │
@@ -224,6 +229,43 @@ POST /api/v1/scenarios/{executionId}/resume
 
 ---
 
+## Information Flow — Google Sign-In / JWT
+
+```
+Browser (Google Identity Services)
+  │
+  │  User clicks "Sign in with Google"
+  │  GSI library opens popup → user authenticates → Google issues ID token
+  │
+  ▼ POST /auth/google  { idToken: "eyJhbGci..." }
+  │
+  ▼ AuthController.GoogleSignIn()
+  │
+  ├─ Validate idToken via GoogleJsonWebSignature.ValidateAsync()
+  │   Verifies: Google signature, expiry, audience = ClientId
+  │   Returns GoogleJsonWebSignature.Payload (email, name, picture, subject)
+  │
+  ├─ Domain enforcement (server-side):
+  │   payload.Email must end with @{Auth:AllowedDomain}
+  │   If not → HTTP 401 { error: "domain_not_allowed" }
+  │
+  ├─ Issue application JWT (HmacSha256, Jwt:SecretKey):
+  │   Claims: sub, email, name, picture
+  │   Expiry: 8 hours
+  │
+  ▼ HTTP 200 { token, expires, user: { email, name, picture } }
+  │
+  Browser stores token in memory (let JWT — not window, not localStorage)
+  All subsequent API calls: Authorization: Bearer {token}
+
+/config endpoint (UI startup):
+  GET /config → { apiBaseUrl, googleClientId, allowedDomain }
+  UI reads this on load — keeps deployment values out of compiled HTML.
+  googleClientId is not a secret — used by GSI library in browser JS.
+```
+
+---
+
 ## Information Flow — LLM Chat
 
 ```
@@ -238,15 +280,15 @@ POST /api/v1/chat  { message: "Process a payment to Acme..." }
   │
   ▼ ILlmProvider.ChatAsync(message, tools, executeTool, systemPrompt, ct)
   │
-  │   [ClaudeProvider or OpenAiProvider — same interface, different wire format]
+  │   [ClaudeProvider, OpenAiProvider or GeminiProvider — same interface, different wire format]
   │
   │   ┌─ Agentic loop ──────────────────────────────────────────────────────┐
   │   │                                                                     │
   │   │  Send messages to LLM API with tool schemas                        │
   │   │         ↓                                                           │
-  │   │  Parse response: text blocks + tool_use/tool_calls                 │
+  │   │  Parse response: text blocks + tool_use/tool_calls/functionCall    │
   │   │         ↓                                                           │
-  │   │  If stop_reason = end_turn (no tool calls) → return text           │
+  │   │  If stop_reason = end_turn / STOP (no tool calls) → return text    │
   │   │         ↓                                                           │
   │   │  For each tool call:                                                │
   │   │    executeTool(toolName, input)                                     │
@@ -272,20 +314,36 @@ All three provider categories follow the Strategy pattern. Selection happens onc
 ```
 ILlmProvider ───────────┬── ClaudeProvider   (LLM:Provider = "claude")
                         ├── OpenAiProvider   (LLM:Provider = "openai")
+                        ├── GeminiProvider   (LLM:Provider = "gemini")
                         └── NullLlmProvider  (no API key configured)
 
 ICacheProvider ─────────┬── MemoryCacheProvider  (Cache:Provider = "memory")
                         └── RedisCacheProvider    (Cache:Provider = "redis")
 
-AppDbContext ───────────┬── UseSqlite(...)   (Database:Provider = "sqlite")
+AppDbContext ───────────┬── UseSqlite(...)     (Database:Provider = "sqlite")
                         ├── UseSqlServer(...)  (Database:Provider = "sqlserver")
-                        └── UseNpgsql(...)   (Database:Provider = "postgres")
+                        └── UseNpgsql(...)     (Database:Provider = "postgres")
 ```
 
 **API key resolution** (LLM providers):
-1. Read `LLM:Claude:ApiKey` from appsettings
-2. If empty, fall back to `ANTHROPIC_API_KEY` environment variable
-3. If still empty, register `NullLlmProvider`
+
+| Provider | Config key | Environment variable | Fallback |
+|----------|-----------|----------------------|---------|
+| Claude | `LLM:Claude:ApiKey` | `ANTHROPIC_API_KEY` | `NullLlmProvider` |
+| OpenAI | `LLM:OpenAI:ApiKey` | `OPENAI_API_KEY` | `NullLlmProvider` |
+| Gemini | `LLM:Gemini:ApiKey` | `GOOGLE_API_KEY` | `NullLlmProvider` |
+
+Environment variables take precedence over empty appsettings values. On Lambda, all keys are fetched from AWS Secrets Manager at cold start and injected as environment variables before the DI container is built.
+
+**GeminiProvider wire format notes:**
+- REST endpoint: `{BaseUrl}/models/{model}:generateContent?key={apiKey}` — auth via query param, no `Authorization` header
+- Tool declarations: `tools: [{ functionDeclarations: [...] }]` — dots in tool names replaced with `__`
+- Message roles: `user` and `model` only — no `function` role
+- Function calls: `candidates[0].content.parts[].functionCall { name, args }` — no `id` field
+- Tool results: sent back under `user` role as `{ functionResponse: { name, response } }` parts
+- System prompt: `systemInstruction: { parts: [{ text: "..." }] }` — separate field, not a message
+- Token counts: `usageMetadata.{ promptTokenCount, candidatesTokenCount }`
+- End-of-turn signal: `finishReason: "STOP"` with no `functionCall` parts
 
 ---
 
@@ -361,6 +419,7 @@ ApprovalBehavior (behavior 3 of 4):
 
 Approval token verification (ApprovalsController):
   - CryptographicOperations.FixedTimeEquals(expected, provided)  ← E1 timing-safe
+  - [Authorize] required on both /approve and /deny endpoints    ← C1, C2
 ```
 
 ---
@@ -369,13 +428,22 @@ Approval token verification (ApprovalsController):
 
 | Ref | Constraint | Implementation |
 |-----|-----------|----------------|
+| C1, C2 | Authorization on approval endpoints | `[Authorize]` on `ApproveRequest` and `DenyRequest` actions in `ApprovalsController` |
+| C4 | No secrets in source | All API keys blank in config — injected via env vars / Secrets Manager only |
 | E1 | Approval token strength | 256-bit CSPRNG hex |
 | E1 | Constant-time comparison | `CryptographicOperations.FixedTimeEquals` |
 | E2 | Brute-force lockout | `FailedOtpAttempts` counter on `PendingApproval` |
 | F4 | Loop detection | `ICacheProvider.IncrementAsync` — 5 calls / 5 min per (tool, correlation) |
 | F8 | Idempotency | `IdempotencyKey` on `ExecuteToolCommand` → `AsyncApprovalGate` deduplication |
-| H3 | Acknowledgement | `AcknowledgementStatement` for High/Critical risk tools (EU AI Act §14) |
-| H4 | Caller identity | `CallerType` (Human/AiAgent/SystemService) persisted on every audit record |
+| H3 | Info disclosure | Approval token removed from browser console log output |
+| H4 | XSS (Markdown) | `renderMarkdown()` sanitisation strips `on*` event handlers and `javascript:` URIs |
+| H5 | JWT algorithm pinning | `ValidAlgorithms = new[] { SecurityAlgorithms.HmacSha256 }` — prevents alg=none and confusion attacks |
+| H7 | Server-side input validation | Explicit field checks in `PaymentsController` before MediatR dispatch — required fields, max lengths, amount range, ISO 4217 currency regex, enum bounds |
+| H7 (AI) | Acknowledgement | `AcknowledgementStatement` for High/Critical risk tools (EU AI Act §14) |
+| M1 | JWT variable scope | `let JWT` (not `window.JWT`) + `Object.defineProperty` write guard |
+| M2 | CSRF | `credentials: 'omit'` + `X-Requested-With: XMLHttpRequest` on all `apiFetch()` calls |
+| M7 | Security headers | `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Content-Security-Policy` set in UI `Program.cs` middleware |
+| M8 | Attribute-context XSS | `escAttr()` function for HTML attribute encoding alongside existing `escHtml()` |
 
 ---
 

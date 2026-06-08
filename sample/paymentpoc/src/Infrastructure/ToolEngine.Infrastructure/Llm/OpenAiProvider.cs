@@ -22,11 +22,13 @@ public sealed class OpenAiProvider : ILlmProvider
 
     private readonly HttpClient    _http;
     private readonly OpenAiOptions _opts;
+    private readonly bool          _streaming;
 
-    public OpenAiProvider(IHttpClientFactory httpFactory, OpenAiOptions opts)
+    public OpenAiProvider(IHttpClientFactory httpFactory, OpenAiOptions opts, bool streaming = true)
     {
-        _opts = opts;
-        _http = httpFactory.CreateClient();
+        _opts      = opts;
+        _streaming = streaming;
+        _http      = httpFactory.CreateClient();
         _http.DefaultRequestHeaders.Add("Authorization", $"Bearer {opts.ApiKey}");
     }
 
@@ -104,13 +106,13 @@ public sealed class OpenAiProvider : ILlmProvider
                 var (ns, name) = Split(toolName);
 
                 // Emit tool_started event before execution
-                if (onStream is not null)
+                if (_streaming && onStream is not null)
                     await onStream(new ToolStartedEvent(toolName, toolInput));
 
                 var (output, success, suspended) = await RunTool(executeTool, toolName, toolInput);
 
                 // Emit tool_completed event after execution
-                if (onStream is not null)
+                if (_streaming && onStream is not null)
                     await onStream(new ToolCompletedEvent(toolName, output, success, suspended));
 
                 callLog.Add(new LlmToolCall(toolName, $"{ns}.{name}", toolInput, output, success, suspended));

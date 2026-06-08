@@ -44,7 +44,7 @@ public sealed class VerifyPayeeHandler
     public override string    Name      => "verify-payee";
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
-        Description:  "Verifies the payee exists in the entity database and is active with complete bank details. Links the verified payee to the PaymentInstruction.",
+        Description:  "Verifies if the payee exists in the entity database and is active with complete bank details. Links the verified payee to the PaymentInstruction.",
         WhenToUse:    "Call after payment.initiate. Pass `paymentId` (prid from initiate) and `payeeRef` (payee name). The returned `payeeId` must be passed to payment.ppm-check as `verifiedPayeeId` and to payment.kyc-screen as `payeeId`. The returned `jurisdiction` is needed by payment.calculate-wht as `payeeJurisdiction`. The returned `entityType` and `legalName` are needed by payment.kyc-screen.",
         WhenNotToUse: "Do not call before payment.initiate. Do not call for payee onboarding or KYC screening — those are separate tools.",
         Examples:     ["Verify Acme Consulting is an approved payee", "Check that Risq Capital has complete bank details"],

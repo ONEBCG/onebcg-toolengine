@@ -440,9 +440,9 @@ void Banner()
     Console.ForegroundColor = ConsoleColor.Red;
     Console.Write("  ONE BCG");
     Console.ForegroundColor = ConsoleColor.White;
-    Console.WriteLine("  ToolEngine v2026 — B2B Payment Pipeline CLI");
+    Console.WriteLine("  ToolEngine v2026 — Payment Pipeline CLI");
     Console.ForegroundColor = ConsoleColor.DarkGray;
-    Console.WriteLine("  8-Stage pipeline · MediatR · EF Core · SQLite (local dev)");
+    Console.WriteLine("  Multi-Stage pipeline ");
     Console.ForegroundColor = ConsoleColor.White;
     Console.WriteLine("═══════════════════════════════════════════════════════════");
     Console.ResetColor();

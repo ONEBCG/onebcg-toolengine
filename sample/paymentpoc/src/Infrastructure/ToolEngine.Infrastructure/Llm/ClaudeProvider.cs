@@ -25,11 +25,13 @@ public sealed class ClaudeProvider : ILlmProvider
 
     private readonly HttpClient    _http;
     private readonly ClaudeOptions _opts;
+    private readonly bool          _streaming;
 
-    public ClaudeProvider(IHttpClientFactory httpFactory, ClaudeOptions opts)
+    public ClaudeProvider(IHttpClientFactory httpFactory, ClaudeOptions opts, bool streaming = true)
     {
-        _opts = opts;
-        _http = httpFactory.CreateClient();
+        _opts      = opts;
+        _streaming = streaming;
+        _http      = httpFactory.CreateClient();
         _http.DefaultRequestHeaders.Add("x-api-key",         opts.ApiKey);
         _http.DefaultRequestHeaders.Add("anthropic-version", AnthropicApiVersion);
     }
@@ -111,13 +113,13 @@ public sealed class ClaudeProvider : ILlmProvider
                 var (ns, name) = Split(toolName);
 
                 // Emit tool_started event before execution (enables real-time streaming to browser)
-                if (onStream is not null)
+                if (_streaming && onStream is not null)
                     await onStream(new ToolStartedEvent(toolName, toolInput));
 
                 var (output, success, suspended) = await RunTool(executeTool, toolName, toolInput);
 
                 // Emit tool_completed event after execution
-                if (onStream is not null)
+                if (_streaming && onStream is not null)
                     await onStream(new ToolCompletedEvent(toolName, output, success, suspended));
 
                 callLog.Add(new LlmToolCall(toolName, $"{ns}.{name}", toolInput, output, success, suspended));

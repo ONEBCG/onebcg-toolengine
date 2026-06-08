@@ -39,6 +39,10 @@ public static class ServiceCollectionExtensions
         // ── Infrastructure — EF entity configurations + seeder ─────────────────
         services.AddPaymentInfrastructure();
 
+        // Typed config for resume verification secret
+        services.Configure<ToolEngine.Payment.Application.Commands.PaymentApplicationOptions>(
+            sp => { }); // defaults used; override via appsettings "Payment:ResumeVerificationSecret"
+
         return services;
     }
 
@@ -55,5 +59,9 @@ public static class ServiceCollectionExtensions
 
         ToolEngine.Payment.Tools.Extensions.ServiceCollectionExtensions
             .RegisterPaymentScenarios(services, scenarioRegistry);
+
+        var toolRegistry = services.GetRequiredService<ToolEngine.Tools.Abstractions.Interfaces.IToolRegistry>();
+        await ToolEngine.Payment.Application.Extensions.ServiceCollectionExtensions
+            .RegisterResumeToolsAsync(services, toolRegistry);
     }
 }

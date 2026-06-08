@@ -1,0 +1,19 @@
+{
+  "profile":                "default",
+  "region":                 "ap-south-1",
+  "configuration":          "Release",
+  "framework":              "net8.0",
+  "function-runtime":       "dotnet8",
+  "function-memory-size":   256,
+  "function-timeout":       30,
+  "function-handler":       "ToolEngine.Ui",
+  "function-name":          "toolengine-ui",
+  "function-role":          "arn:aws:iam::515674010661:role/toolengine-lambda-role",
+  "function-url-enable":    true,
+  "function-url-invoke-mode": "BUFFERED",
+  "function-url-auth-type": "NONE",
+  "environment-variables":  "ASPNETCORE_ENVIRONMENT=Production",
+  "s3-bucket":              "toolengine-lambda-deploys-515674010661",
+  "s3-prefix":              "toolengine-ui",
+  "msbuild-parameters":     "--self-contained false"
+}

@@ -6,6 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Amazon.Lambda.AspNetCoreServer.Hosting" Version="2.1.0" />
+    <PackageReference Include="AWSSDK.SecretsManager"                  Version="4.*" />
+  </ItemGroup>
 
 </Project>

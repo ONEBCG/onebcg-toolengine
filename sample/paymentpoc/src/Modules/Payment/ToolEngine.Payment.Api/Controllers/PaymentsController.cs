@@ -26,11 +26,43 @@ public sealed class PaymentsController : ControllerBase
     [HttpPost]
     [ProducesResponseType(200)]
     [ProducesResponseType(202)]
+    [ProducesResponseType(400)]
     [ProducesResponseType(422)]
     public async Task<IActionResult> InitiatePayment(
         [FromBody] InitiatePaymentRequest req,
         CancellationToken ct)
     {
+        // H7: server-side input validation — never trust client-supplied values
+        var errors = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(req.PayerName))           errors.Add("PayerName is required.");
+        else if (req.PayerName.Length > 256)                    errors.Add("PayerName must be ≤ 256 characters.");
+
+        if (string.IsNullOrWhiteSpace(req.PayerJurisdiction))   errors.Add("PayerJurisdiction is required.");
+        else if (req.PayerJurisdiction.Length > 8)              errors.Add("PayerJurisdiction must be ≤ 8 characters.");
+
+        if (string.IsNullOrWhiteSpace(req.PayerEntityId))       errors.Add("PayerEntityId is required.");
+        else if (req.PayerEntityId.Length > 256)                errors.Add("PayerEntityId must be ≤ 256 characters.");
+
+        if (string.IsNullOrWhiteSpace(req.PayeeRef))            errors.Add("PayeeRef is required.");
+        else if (req.PayeeRef.Length > 256)                     errors.Add("PayeeRef must be ≤ 256 characters.");
+
+        if (req.GrossAmount <= 0)                               errors.Add("GrossAmount must be greater than zero.");
+        else if (req.GrossAmount > 10_000_000)                  errors.Add("GrossAmount must not exceed 10,000,000.");
+
+        if (string.IsNullOrWhiteSpace(req.Currency))            errors.Add("Currency is required.");
+        else if (!System.Text.RegularExpressions.Regex.IsMatch(req.Currency, @"^[A-Z]{3}$"))
+                                                                errors.Add("Currency must be a 3-letter ISO 4217 code (e.g. USD, SGD).");
+
+        if (!Enum.IsDefined(typeof(ServiceType), req.ServiceType))
+                                                                errors.Add($"ServiceType '{req.ServiceType}' is not a recognised value.");
+
+        if (string.IsNullOrWhiteSpace(req.PpmId))              errors.Add("PpmId is required.");
+        else if (req.PpmId.Length > 128)                       errors.Add("PpmId must be ≤ 128 characters.");
+
+        if (errors.Count > 0)
+            return BadRequest(new { errors });
+
         var command = new ProcessPaymentCommand(
             PayerName:         req.PayerName,
             PayerJurisdiction: req.PayerJurisdiction,

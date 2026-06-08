@@ -15,13 +15,11 @@ namespace ToolEngine.Api.Controllers;
 [Tags("Approvals")]
 public sealed class ApprovalsController : ControllerBase
 {
-    private readonly AppDbContext        _db;
-    private readonly IWebHostEnvironment _env;
+    private readonly AppDbContext _db;
 
-    public ApprovalsController(AppDbContext db, IWebHostEnvironment env)
+    public ApprovalsController(AppDbContext db)
     {
-        _db  = db;
-        _env = env;
+        _db = db;
     }
 
     /// <summary>
@@ -130,6 +128,7 @@ public sealed class ApprovalsController : ControllerBase
 
     /// <summary>Approve a pending tool invocation using the approval token (E1: constant-time comparison).</summary>
     [HttpPost("{id:guid}/approve")]
+    [Authorize]
     [ProducesResponseType(200)]
     [ProducesResponseType(404)]
     [ProducesResponseType(422)]
@@ -174,6 +173,7 @@ public sealed class ApprovalsController : ControllerBase
 
     /// <summary>Deny a pending tool invocation with a mandatory reason.</summary>
     [HttpPost("{id:guid}/deny")]
+    [Authorize]
     [ProducesResponseType(200)]
     [ProducesResponseType(404)]
     [ProducesResponseType(422)]
@@ -202,15 +202,55 @@ public sealed class ApprovalsController : ControllerBase
         });
     }
 
-    /// <summary>[DEV ONLY] Retrieve the raw approval token for local testing. Not available in Production.</summary>
-    [HttpGet("{id:guid}/token")]
+    /// <summary>Archive (expire) a single approval, removing it from the pending queue.</summary>
+    [HttpPost("{id:guid}/archive")]
+    [Authorize]
     [ProducesResponseType(200)]
-    [ProducesResponseType(403)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(422)]
+    public async Task<IActionResult> ArchiveApproval(Guid id, CancellationToken ct)
+    {
+        var approval = await _db.Set<PendingApproval>()
+            .FirstOrDefaultAsync(a => a.Id == id, ct);
+
+        if (approval is null)
+            return NotFound();
+
+        if (approval.Status != ApprovalStatus.Pending)
+            return UnprocessableEntity(new { error = $"Approval is already {approval.Status} — cannot archive." });
+
+        approval.Expire();
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(new { approvalId = approval.Id, status = "Archived", message = "Approval archived and removed from queue." });
+    }
+
+    /// <summary>Bulk-archive all pending approvals whose expiry deadline has passed.</summary>
+    [HttpPost("archive-expired")]
+    [Authorize]
+    [ProducesResponseType(200)]
+    public async Task<IActionResult> ArchiveAllExpired(CancellationToken ct)
+    {
+        var now     = DateTimeOffset.UtcNow;
+        var expired = await _db.Set<PendingApproval>()
+            .Where(a => a.Status == ApprovalStatus.Pending && a.ExpiresAt < now)
+            .ToListAsync(ct);
+
+        foreach (var a in expired)
+            a.Expire();
+
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(new { archived = expired.Count, message = $"{expired.Count} expired approval(s) archived." });
+    }
+
+    /// <summary>Retrieve the raw approval token for UI-driven approval flow (POC — all environments).</summary>
+    [HttpGet("{id:guid}/token")]
+    [Authorize]
+    [ProducesResponseType(200)]
     [ProducesResponseType(404)]
     public async Task<IActionResult> GetApprovalTokenDev(Guid id, CancellationToken ct)
     {
-        if (!_env.IsDevelopment())
-            return Forbid();
 
         var approval = await _db.Set<PendingApproval>()
             .AsNoTracking()
