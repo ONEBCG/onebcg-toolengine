@@ -56,9 +56,9 @@ public sealed class ResumePaymentTool
     public override string    Name      => "resume";
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
-        Description:  "Executes Stages 6 (bank submission) and 7 (reconciliation) for a human-approved payment. Requires a verificationToken from payment.resume-verify — the tool rejects requests without a valid token.",
-        WhenToUse:    "Call ONLY after payment.resume-verify has succeeded and returned a verificationToken. Pass the paymentId and the verificationToken unchanged. On success returns SETTLED with a bankTransactionId.",
-        WhenNotToUse: "Do not call without a valid verificationToken from payment.resume-verify. Do not call if the payment is not in an approved state. Do not call if the payment is already SETTLED or FAILED.",
+        Description:  "Executes Stages 6 (bank submission) and 7 (reconciliation) for a human-approved payment. Requires a verificationToken from payment.resume-payment-verify — the tool rejects requests without a valid token.",
+        WhenToUse:    "Call ONLY after payment.resume-payment-verify has succeeded and returned a verificationToken. Pass the paymentId and the verificationToken unchanged. On success returns SETTLED with a bankTransactionId.",
+        WhenNotToUse: "Do not call without a valid verificationToken from payment.resume-payment-verify. Do not call if the payment is not in an approved state. Do not call if the payment is already SETTLED or FAILED.",
         Examples:     ["Resume approved GBP 5000 payment after verification", "Execute Stage 6-7 after human approval and verification"],
         InputSchema:  BuildJsonSchema<ResumePaymentToolInput>(),
         OutputSchema: BuildJsonSchema<ResumePaymentToolOutput>());
@@ -89,7 +89,7 @@ public sealed class ResumePaymentTool
         if (!tokenValid)
             return Fail(request,
                 "Verification token is invalid or has expired (~10 minute window). " +
-                "Call payment.resume-verify again to obtain a fresh token, then retry.");
+                "Call payment.resume-payment-verify again to obtain a fresh token, then retry.");
 
         // ── Delegate to ResumePaymentCommand (Stages 6-7) ─────────────────────
         var result = await _mediator.Send(
@@ -98,7 +98,7 @@ public sealed class ResumePaymentTool
         if (!result.IsSuccess)
             return Fail(request, result.ErrorCode is not null
                 ? $"{result.ErrorCode}: {result.Message}"
-                : result.Message ?? "Resume failed.");
+                : result.Message ?? "Payment resume failed.");
 
         return ToolResponse<ResumePaymentToolOutput>.Ok(
             request.CorrelationId,

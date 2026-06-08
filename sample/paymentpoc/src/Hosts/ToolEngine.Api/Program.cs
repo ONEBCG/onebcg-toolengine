@@ -166,7 +166,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title       = "ToolEngine Payment POC API",
         Version     = "v1",
-        Description = "ONE BCG ToolEngine v2026 — B2B Payment Processing Pipeline (7-Stage)",
+        Description = "ONE BCG ToolEngine v2026 — Payment Processing Pipeline (Multi-Stage)",
     });
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme

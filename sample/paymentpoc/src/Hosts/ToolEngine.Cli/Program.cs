@@ -1,5 +1,5 @@
 /*
- *  ONE BCG ToolEngine v2026 — B2B Payment Pipeline CLI Demo
+ *  ONE BCG ToolEngine v2026 — Payment Pipeline CLI Demo
  *  ─────────────────────────────────────────────────────────
  *  Interactive console runner that exercises all 8 pipeline stages
  *  against a locally running ToolEngine.Api instance.

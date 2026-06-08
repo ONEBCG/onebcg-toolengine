@@ -59,10 +59,10 @@ public sealed class ResumeVerifyTool
     }
 
     public override string    Namespace => "payment";
-    public override string    Name      => "resume-verify";
+    public override string    Name      => "resume-payment-verify";
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
-        Description:  "Verification gate before payment execution. The operator confirms the PRID, gross amount, and currency of a human-approved payment. Returns a short-lived token (~10 min) required by payment.resume — without it resume cannot proceed.",
+        Description:  "Payment verification gate before resuming payment execution. The operator confirms the PRID, gross amount, and currency of a human-approved payment. Returns a short-lived token (~10 min) required by payment.resume — without it resume cannot proceed.",
         WhenToUse:    "Always call before payment.resume. Ask the user to confirm: (1) the PRID, (2) the gross amount as originally initiated, (3) the currency. Human approval must already be granted (check Approvals panel) before calling this. Pass the returned verificationToken to payment.resume.",
         WhenNotToUse: "Do not call if human approval has not yet been granted — direct the user to the Approvals panel first. Do not call if the payment is already SETTLED or FAILED.",
         Examples:     ["Verify GBP 5000 payment to Acme Consulting before execution", "Confirm payment details before resuming USD 10000 transaction"],

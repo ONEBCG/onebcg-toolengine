@@ -134,8 +134,13 @@ public sealed class GeminiProvider : ILlmProvider
                 }
             }
 
-            // No function calls — conversation complete
-            if (functionCalls.Count == 0 || finishReason == "STOP")
+            // No function calls — conversation complete.
+            // Do NOT gate on finishReason == "STOP" here: Gemini 2.5 Flash returns
+            // finishReason = "STOP" alongside functionCall parts in some response patterns.
+            // Using finishReason as a stop signal would silently skip tool execution and
+            // suppress all tool_started / tool_completed SSE events.
+            // The presence of functionCall parts is the only reliable signal.
+            if (functionCalls.Count == 0)
                 return LlmChatResponse.Success(
                     string.Join("\n", textParts), callLog, totalInput, totalOutput);
 

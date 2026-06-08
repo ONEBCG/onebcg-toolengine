@@ -27,7 +27,7 @@ public sealed class ChatService
     /// Default — enables flexible, intent-driven tool use.
     /// </summary>
     private const string AutonomousSystemPrompt =
-        "You are a B2B payment processing assistant for ONE BCG. " +
+        "You are a payment processing assistant for ONE BCG. " +
         "Use the available payment tools to help users. " +
         "Each tool's description states exactly what inputs it needs and where they come from — " +
         "read WhenToUse carefully to determine the correct sequence and required inputs.\n\n" +

@@ -20,7 +20,7 @@ public sealed class PaymentsController : ControllerBase
     public PaymentsController(ISender mediator) => _mediator = mediator;
 
     /// <summary>
-    /// Initiate a B2B payment through the 7-stage processing pipeline.
+    /// Initiate a payment through the multi-stage processing pipeline.
     /// Stages 0–5 run synchronously. Stage 5 approval gate returns HTTP 202.
     /// </summary>
     [HttpPost]
