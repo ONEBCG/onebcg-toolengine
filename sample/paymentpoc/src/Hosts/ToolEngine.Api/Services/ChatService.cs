@@ -41,8 +41,15 @@ public sealed class ChatService
         "  Horizon Advisory (PPM-002, EXPIRED — will block at Stage 2)\n" +
         "  Risq Capital (PPM-003, active — KYC blocks at Stage 4)\n\n" +
 
+        "RESUME FLOW — when a user provides a PRID and says 'approved', 'resume', or wants to continue an existing payment:\n" +
+        "  - NEVER call payment.initiate — the payment already exists in the system.\n" +
+        "  - Ask only for the gross amount and currency to confirm (e.g. '5000 GBP').\n" +
+        "  - Any amount and currency the user provides IS confirmation data, NOT a new payment request.\n" +
+        "  - Immediately call payment.resume-payment-verify with the PRID, confirmedAmount, and confirmedCurrency.\n" +
+        "  - On success, pass the verificationToken directly to payment.resume.\n\n" +
+
         "Only ask for clarification if genuinely ambiguous (unknown payee, missing amount).\n" +
-        "ServiceType: 0=ManagementConsulting 1=CloudSaaS 2=SoftwareLicense 3=ContractStaffing";
+        "ServiceType: 0=SoftwareLicense 1=CloudSaas 2=ManagementConsulting 3=InterestOnLoan 4=DividendDistribution 5=ContractStaffing 6=Other";
 
     /// <summary>
     /// Guided mode: includes explicit WORKFLOW section with prescribed call sequence.
@@ -59,7 +66,7 @@ public sealed class ChatService
         "  payerJurisdiction: GB\n" +
         "  payerEntityId:     PAYER-ONEBCG-001\n" +
         "  initiatorId:       chat-user\n" +
-        "  serviceType:       0  (ManagementConsulting)\n\n" +
+        "  serviceType:       2  (ManagementConsulting)\n\n" +
 
         "SEEDED PAYEES AND CONTRACTS:\n" +
         "  Acme Consulting  — PPM-001 (active, GBP/USD/EUR, £250k cap)\n" +
@@ -71,9 +78,12 @@ public sealed class ChatService
         "    then use that PRID in payment.verify-payee, payment.ppm-check, etc.\n" +
         "  - Call tools directly using the defaults above when the user provides enough\n" +
         "    context (amount, payee, currency, PPM). Do NOT ask for fields that have defaults.\n" +
+        "  - RESUME: when a user provides a PRID and says 'approved'/'resume', NEVER call\n" +
+        "    payment.initiate. Ask only for the gross amount and currency to confirm.\n" +
+        "    Call payment.resume-payment-verify with the PRID, confirmedAmount, confirmedCurrency, then payment.resume.\n" +
         "  - Only ask for clarification if genuinely ambiguous (e.g. unknown payee,\n" +
         "    missing amount, or conflicting instructions).\n" +
-        "  - ServiceType codes: 0=ManagementConsulting 1=CloudSaaS 2=SoftwareLicense 3=ContractStaffing";
+        "  - ServiceType codes: 0=SoftwareLicense 1=CloudSaas 2=ManagementConsulting 3=InterestOnLoan 4=DividendDistribution 5=ContractStaffing 6=Other";
 
     private readonly ILlmProvider  _provider;
     private readonly IToolRegistry _registry;

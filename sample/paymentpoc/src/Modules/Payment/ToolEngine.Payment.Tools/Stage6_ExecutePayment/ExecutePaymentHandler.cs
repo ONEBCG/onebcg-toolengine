@@ -70,8 +70,8 @@ public sealed class ExecutePaymentHandler
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
         Description:  "Submits the payment instruction to the bank for execution. Only callable after human approval has been granted. Returns a bank transaction ID.",
-        WhenToUse:    "Call only after human approval is confirmed (payment.compile-dossier returned SUSPENDED and a human approved it). Requires `paymentId`, `netPayableAmount` (from calculate-wht output), `currency`, payee bank details (`iban`, `swiftBic`, or `bankAccountNumber`), and `paymentRail`. The returned `bankTransactionId` is required by payment.reconcile.",
-        WhenNotToUse: "Do not call before human approval is granted. Do not call if payment.compile-dossier has not been executed. Do not call to retry a failed bank submission without creating a new payment instruction.",
+        WhenToUse:    "Requires the payment to be in `ApprovalGranted` status. Inputs: `paymentId`, `netPayableAmount` (use net from payment.calculate-wht if available, or grossAmount when WHT is zero), `currency`, `payeeLegalName`, bank details (`iban`, `swiftBic` — from payee record or provided directly), and `paymentRail` (Swift for cross-border, Sepa for EUR within Europe, FasterPayments for GBP domestic, Ach for USD domestic).",
+        WhenNotToUse: "Do not call if the payment status is not `ApprovalGranted`. Do not call to retry a failed bank submission without creating a new payment instruction.",
         Examples:     ["Execute the approved GBP 5000 payment to Acme Consulting", "Submit payment to bank after approval"],
         InputSchema:  BuildJsonSchema<ExecutePaymentInput>(),
         OutputSchema: BuildJsonSchema<ExecutePaymentOutput>());

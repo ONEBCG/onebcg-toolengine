@@ -48,7 +48,7 @@ public sealed class PpmCheckHandler
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
         Description:  "Validates the payment against the governing PPM contract: permitted service types, approved currencies, per-transaction cap, and aggregate cap. Blocks if any condition is violated.",
-        WhenToUse:    "Call after payment.verify-payee. Requires `paymentId` (prid from initiate), `verifiedPayeeId` (payeeId from verify-payee), `serviceType`, `grossAmount`, and `currency`.",
+        WhenToUse:    "Requires `paymentId` (prid from payment.initiate), `ppmId` (the governing PPM contract ID, e.g. PPM-001), `verifiedPayeeId` (payeeId GUID from payment.verify-payee), `serviceType`, `grossAmount`, and `currency`.",
         WhenNotToUse: "Do not call before payment.initiate and payment.verify-payee have both succeeded. Do not use for contract creation or amendment.",
         Examples:     ["Check if GBP 50000 consulting payment is permitted under PPM-001", "Validate USD 10000 payment against expired contract PPM-002"],
         InputSchema:  BuildJsonSchema<PpmCheckInput>(),

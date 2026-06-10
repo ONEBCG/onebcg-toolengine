@@ -46,7 +46,7 @@ public sealed class ReconcilePaymentHandler
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
         Description:  "Reconciles the executed payment against the bank transaction and marks it as SETTLED. Final step in the payment lifecycle.",
-        WhenToUse:    "Call immediately after payment.execute-payment succeeds. Requires `paymentId`, `bankTransactionId` (from execute-payment output), `settledAmount`, `currency`, and optionally `bankReference`.",
+        WhenToUse:    "Requires `paymentId`, `bankTransactionId` (from payment.execute-payment output — system-generated, no other source), `settledAmount` (the bank-confirmed amount — typically netPayableAmount from payment.calculate-wht, or grossAmount if WHT was zero), `currency`, and optionally `bankReference`.",
         WhenNotToUse: "Do not call before payment.execute-payment has succeeded and returned a bank transaction ID.",
         Examples:     ["Reconcile settled payment with bank transaction TX-12345", "Mark payment as settled after bank confirmation"],
         InputSchema:  BuildJsonSchema<ReconcilePaymentInput>(),

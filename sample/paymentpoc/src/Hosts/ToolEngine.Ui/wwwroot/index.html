@@ -1884,6 +1884,9 @@
           <button class="chat-chip" onclick="fillChatPrompt('Is Risq Capital an approved payee?')">Is Risq Capital an approved payee?</button>
           <button class="chat-chip" onclick="fillChatPrompt('Verify Horizon Advisory is a valid payee')">Verify Horizon Advisory is a valid payee</button>
           <button class="chat-chip" onclick="fillChatPrompt('What payment tools do you have available?')">What payment tools do you have available?</button>
+          <button class="chat-chip" onclick="fillChatPrompt('Resume approved payment')">Resume approved payment</button>
+          <button class="chat-chip" onclick="fillChatPrompt('Calculate WHT on GBP 5,000 consulting payment from GB to US')">Calculate WHT on GBP 5,000 from GB to US</button>
+          <button class="chat-chip" onclick="fillChatPrompt('Check if GBP 50,000 consulting payment is permitted under PPM-001 for Acme Consulting')">Check if GBP 50,000 permitted under PPM-001</button>
         </div>
         <div class="chat-provider-line">
           <div class="chat-provider-badge">
@@ -3669,6 +3672,10 @@ async function sendChat() {
           if (line.startsWith('data: '))  data      = line.slice(6).trim();
         }
         if (eventType && data) handleStreamEvent(eventType, JSON.parse(data));
+        // Yield to the browser between each SSE block so each tool card gets
+        // its own paint frame. Without this, multiple events arriving in the
+        // same TCP chunk are processed synchronously and all cards appear at once.
+        await new Promise(r => setTimeout(r, 0));
       }
     }
   } catch(e) {
@@ -3791,8 +3798,12 @@ function handleStreamEvent(eventType, data) {
       appendToolStartedCard(data.toolName, data.input);
       break;
     case 'tool_completed':
-      finaliseToolCard(data.toolName, data.outputJson, data.success, data.suspended);
-      showThinkingIndicator();
+      // Small delay before finalising so the spinner is visible even when
+      // the tool stub completes in under a millisecond.
+      setTimeout(() => {
+        finaliseToolCard(data.toolName, data.outputJson, data.success, data.suspended);
+        showThinkingIndicator();
+      }, 120);
       break;
     case 'done':
       removeThinkingIndicator();

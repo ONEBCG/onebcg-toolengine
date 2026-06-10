@@ -28,7 +28,7 @@ public sealed record ResumePaymentToolOutput(
 /// payment.resume — Executes Stage 6 (bank submission) and Stage 7 (reconciliation)
 /// after human approval and operator verification.
 ///
-/// Hard dependency on payment.resume-verify: the verificationToken returned by
+/// Hard dependency on payment.resume-payment-verify: the verificationToken returned by
 /// that tool is required here. An invalid or expired token is rejected with a
 /// clear message directing the operator to re-verify.
 /// Applies to ALL callers — LLM agents, direct API, CLI.
@@ -56,9 +56,9 @@ public sealed class ResumePaymentTool
     public override string    Name      => "resume";
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
-        Description:  "Executes Stages 6 (bank submission) and 7 (reconciliation) for a human-approved payment. Requires a verificationToken from payment.resume-payment-verify — the tool rejects requests without a valid token.",
-        WhenToUse:    "Call ONLY after payment.resume-payment-verify has succeeded and returned a verificationToken. Pass the paymentId and the verificationToken unchanged. On success returns SETTLED with a bankTransactionId.",
-        WhenNotToUse: "Do not call without a valid verificationToken from payment.resume-payment-verify. Do not call if the payment is not in an approved state. Do not call if the payment is already SETTLED or FAILED.",
+        Description:  "Executes bank submission (Stage 6) and reconciliation (Stage 7) for a human-approved payment. Requires a valid `verificationToken` — a short-lived HMAC token obtained after full payment re-validation.",
+        WhenToUse:    "Requires `paymentId` and a valid `verificationToken` (obtained from payment.resume-payment-verify). On success returns SETTLED with a bankTransactionId.",
+        WhenNotToUse: "Do not call without a valid verificationToken. Do not call if the payment is not in an approved state. Do not call if the payment is already SETTLED or FAILED.",
         Examples:     ["Resume approved GBP 5000 payment after verification", "Execute Stage 6-7 after human approval and verification"],
         InputSchema:  BuildJsonSchema<ResumePaymentToolInput>(),
         OutputSchema: BuildJsonSchema<ResumePaymentToolOutput>());

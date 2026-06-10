@@ -57,7 +57,7 @@ public sealed class CalculateWhtHandler
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
         Description:  "Calculates withholding tax (WHT) based on payer/payee jurisdictions and service type. Returns WHT rate, WHT amount, and net payable amount.",
-        WhenToUse:    "Call after payment.verify-payee. Requires `paymentId` (prid from initiate), `payerJurisdiction`, `payeeJurisdiction` (the `jurisdiction` field from verify-payee output), `serviceType`, `grossAmount`, `currency`, and `taxYear` (current year).",
+        WhenToUse:    "Requires `paymentId` (prid from payment.initiate). Other inputs — `payerJurisdiction` (country code, e.g. GB), `payeeJurisdiction` (country code, e.g. GB), `serviceType`, `grossAmount`, `currency`, `taxYear` (current calendar year) — can all be provided directly.",
         WhenNotToUse: "Do not call before payment.initiate. Do not use for general tax advice — only for payment WHT calculation.",
         Examples:     [
             "Calculate WHT on GBP 5000 consulting payment from GB to GB",

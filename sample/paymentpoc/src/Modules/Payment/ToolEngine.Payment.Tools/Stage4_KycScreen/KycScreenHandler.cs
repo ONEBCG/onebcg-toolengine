@@ -70,8 +70,8 @@ public sealed class KycScreenHandler
     public override string    Version   => "v1";
     public override ToolSchema Schema   => new(
         Description:  "Screens the payee against KYC databases and sanctions lists. Blocks the payment if a confirmed match is found.",
-        WhenToUse:    "Call after payment.verify-payee. Requires `paymentId` (prid from initiate), `payeeId` (from verify-payee), `payeeLegalName` (legalName from verify-payee), `payeeJurisdiction` (jurisdiction from verify-payee), `entityType` (from verify-payee), `paymentAmount`, and `paymentPurpose` (service type as string).",
-        WhenNotToUse: "Do not call before payment.verify-payee — the payeeId and payee details are required from that output. Do not use for KYC onboarding.",
+        WhenToUse:    "Requires `paymentId` (prid from payment.initiate), `payeeId` (GUID — returned by payment.verify-payee), `payeeLegalName`, `payeeJurisdiction` (country code), and `entityType` — these three can be provided directly or from payment.verify-payee output. Also requires `paymentAmount` (the gross payment amount), `paymentPurpose` (service type description, e.g. ManagementConsulting). `taxIdentifier` is optional — pass null if unknown.",
+        WhenNotToUse: "Do not call without a valid `payeeId` — this GUID is returned by payment.verify-payee. Do not use for KYC onboarding.",
         Examples:     [
             "Screen Acme Consulting before payment execution",
             "Check Risq Capital against sanctions lists",

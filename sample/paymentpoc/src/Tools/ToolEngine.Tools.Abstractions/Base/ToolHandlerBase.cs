@@ -20,34 +20,64 @@ public abstract class ToolHandlerBase
     protected static JsonElement BuildJsonSchema<T>()
     {
         var props = typeof(T).GetProperties()
-            .Select(p => new { name = JsonNamingPolicy.CamelCase.ConvertName(p.Name), type = MapClrType(p.PropertyType) })
-            .ToDictionary(x => x.name, x => (object)new { type = x.type });
+            .ToDictionary(
+                p => JsonNamingPolicy.CamelCase.ConvertName(p.Name),
+                p => (object)MapClrProperty(p.PropertyType));
+
+        // Required = all non-nullable properties (Guid? / string? / decimal? are optional)
+        var required = typeof(T).GetProperties()
+            .Where(p => !IsNullable(p.PropertyType))
+            .Select(p => JsonNamingPolicy.CamelCase.ConvertName(p.Name))
+            .ToArray();
 
         var schema = new
         {
             type       = "object",
             properties = props,
-            required   = props.Keys.ToArray()
+            required,
         };
 
         return JsonSerializer.SerializeToElement(schema);
     }
 
+    /// <summary>
+    /// Returns a JSON Schema property descriptor for the given CLR type.
+    /// Enums are emitted as { "type": "string", "enum": ["Value1", "Value2", ...] }
+    /// so the LLM receives the list of valid string values and never needs to guess.
+    /// </summary>
+    private static object MapClrProperty(Type t)
+    {
+        // Unwrap Nullable<T> — Guid?, decimal?, int?, enum?
+        var underlying = Nullable.GetUnderlyingType(t);
+        if (underlying is not null) return MapClrProperty(underlying);
+
+        // Enum → string with allowed values list
+        if (t.IsEnum)
+        {
+            var values = Enum.GetNames(t);
+            return new { type = "string", @enum = values };
+        }
+
+        return new { type = MapClrType(t) };
+    }
+
     private static string MapClrType(Type t)
     {
-        if (t == typeof(string))           return "string";
-        if (t == typeof(Guid))             return "string";
-        if (t == typeof(decimal)
-         || t == typeof(double)
-         || t == typeof(float))            return "number";
-        if (t == typeof(int) || t == typeof(long)) return "integer";
-        if (t == typeof(bool))             return "boolean";
-        if (t.IsArray || (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(List<>)))
-                                           return "array";
-        var underlying = Nullable.GetUnderlyingType(t);
-        if (underlying is not null) return MapClrType(underlying);
+        if (t == typeof(string))                               return "string";
+        if (t == typeof(Guid))                                 return "string";
+        if (t == typeof(decimal) || t == typeof(double)
+         || t == typeof(float))                                return "number";
+        if (t == typeof(int)     || t == typeof(long))         return "integer";
+        if (t == typeof(bool))                                 return "boolean";
+        if (t == typeof(DateTimeOffset) || t == typeof(DateTime)) return "string";
+        if (t.IsArray || (t.IsGenericType
+         && t.GetGenericTypeDefinition() == typeof(List<>)))   return "array";
         return "object";
     }
+
+    private static bool IsNullable(Type t) =>
+        Nullable.GetUnderlyingType(t) is not null ||
+        (t.IsClass && t != typeof(string));   // reference types are nullable but string is always required
 
     public ToolDescriptor ToDescriptor(ToolType toolType, Type handlerType) =>
         new()
